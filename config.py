@@ -16,6 +16,13 @@ class Settings(BaseSettings):
     app_name: str = "Company Information Intelligence Engine"
     app_version: str = "1.0.0"
 
+    # FastAPI Settings
+    api_host: str = "0.0.0.0"
+    api_port: int = 8000
+    api_debug: bool = False
+    api_reload: bool = True
+    cors_origins: list[str] = ["*"]
+
     # LLM Settings
     llm_api_key: Optional[str] = None
     llm_base_url: str = "https://api.openai.com/v1"

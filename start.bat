@@ -1,8 +1,8 @@
 @echo off
-REM Company Information Intelligence Engine - Startup Script
+REM Company Intelligence Engine - FastAPI Startup Script
 
 echo ========================================
-echo Company Intelligence Engine
+echo Company Intelligence Engine (FastAPI)
 echo ========================================
 echo.
 
@@ -19,10 +19,12 @@ REM Install dependencies
 echo Installing dependencies...
 pip install -q -r requirements.txt
 
-REM Run the application
+REM Run the FastAPI application
 echo.
-echo Starting application...
+echo Starting FastAPI server...
+echo Docs: http://localhost:8000/docs
+echo API:  http://localhost:8000/api/health
 echo.
-streamlit run app.py
+uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 
 pause

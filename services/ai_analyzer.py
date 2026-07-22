@@ -2,7 +2,8 @@
 AI analysis service for processing company information with LLMs.
 
 This module sends extracted content to an LLM and generates
-structured JSON output about the company.
+structured JSON output about the company in the exact format
+consumed by the Java frontend.
 """
 
 import asyncio
@@ -39,6 +40,10 @@ class AIAnalyzerService:
         """
         Analyze company content using LLM.
 
+        The LLM returns a structured JSON that enriches the CompanyInfo
+        with AI-generated insights on industry, services, technologies,
+        and overview.
+
         Args:
             company_name: Name of the company
             content: Combined text content from website
@@ -54,46 +59,64 @@ class AIAnalyzerService:
         logger.info(f"Analyzing company with AI: {company_name}")
 
         try:
-            prompt = self._build_analysis_prompt(company_name, content)
+            prompt = self._build_analysis_prompt(company_name, content, initial_info)
             response = await self._call_llm(prompt)
 
             if response:
                 # Merge AI response with initial info
                 enhanced_info = self._merge_analysis(initial_info, response)
-                logger.info("AI analysis completed successfully")
+                logger.info(f"AI analysis completed successfully for '{company_name}'")
                 return enhanced_info
             else:
                 logger.warning("AI analysis returned no results, returning initial info")
                 return initial_info
 
         except Exception as e:
-            logger.error(f"AI analysis failed: {e}")
+            logger.error(f"AI analysis failed for '{company_name}': {e}", exc_info=True)
             return initial_info
 
-    def _build_analysis_prompt(self, company_name: str, content: str) -> str:
+    def _build_analysis_prompt(
+        self,
+        company_name: str,
+        content: str,
+        initial_info: CompanyInfo
+    ) -> str:
         """Build the analysis prompt for the LLM."""
-        return f"""Analyze the following company website content and return ONLY a JSON object.
+        # Include scraped data as context for the LLM
+        scraped_context = ""
+        if initial_info.emails:
+            scraped_context += f"\nScraped Emails: {', '.join(initial_info.emails)}"
+        if initial_info.phones:
+            scraped_context += f"\nScraped Phones: {', '.join(initial_info.phones)}"
+        if initial_info.address:
+            scraped_context += f"\nScraped Address: {initial_info.address}"
+        if initial_info.social_links:
+            scraped_context += f"\nScraped Social Links: {json.dumps(initial_info.social_links)}"
+
+        return f"""You are a business intelligence analyzer. Analyze the following company website content and return ONLY a valid JSON object. No markdown, no extra text.
 
 Company Name: {company_name}
 
-Website Content:
-{content}
+Website Content (scraped from homepage, about, and contact pages):
+{content[:12000]}
 
-Return a JSON object with this exact structure (no additional text):
+{scraped_context}
+
+Return a JSON object with this exact structure:
 {{
-  "industry": "Industry sector or 'Not Found'",
-  "description": "Brief company description (2-3 sentences)",
-  "services": ["service1", "service2", ...],
-  "technologies": ["technology1", "technology2", ...],
-  "overview": "Comprehensive company overview (3-4 paragraphs)"
+  "industry": "Most specific industry sector (e.g., 'Information Technology & Services', 'Financial Services', 'Healthcare'). Use 'Not Found' if unclear.",
+  "description": "A 2-3 sentence professional company description based on the content.",
+  "services": ["List", "of", "key", "business", "services", "offered"],
+  "technologies": ["List", "of", "technologies", "platforms", "or", "tools", "mentioned"],
+  "overview": "A comprehensive 2-3 paragraph overview covering: what the company does, their market position, key offerings, and any notable information."
 }}
 
-Rules:
-- Return ONLY valid JSON, no markdown formatting
-- If information is not found in the content, use "Not Found"
-- Keep services and technologies as arrays
-- Do NOT hallucinate or make up information
-- Use only the provided website content
+Critical Rules:
+- Return ONLY valid JSON - no markdown formatting, no code fences, no extra text
+- If information is not in the provided content, use "Not Found" - DO NOT hallucinate
+- Services and technologies must be arrays (can be empty if nothing found)
+- Overview must be substantive (at least 2 paragraphs) using only provided content
+- Industry should be as specific as possible based on available context
 """
 
     async def _call_llm(self, prompt: str) -> Optional[Dict[str, Any]]:
@@ -111,7 +134,7 @@ Rules:
                         "messages": [
                             {
                                 "role": "system",
-                                "content": "You are a business intelligence analyzer. Always return valid JSON only."
+                                "content": "You are a business intelligence analyzer. You ALWAYS return only valid JSON objects, no additional text, no markdown formatting."
                             },
                             {
                                 "role": "user",
@@ -119,7 +142,7 @@ Rules:
                             }
                         ],
                         "temperature": self.temperature,
-                        "response_format": {{"type": "json_object"}}
+                        "response_format": {"type": "json_object"}
                     }
                 )
                 response.raise_for_status()
@@ -129,8 +152,15 @@ Rules:
 
                 # Parse JSON response
                 analysis = json.loads(content)
+                logger.debug(f"LLM response parsed successfully: {len(content)} chars")
                 return analysis
 
+        except httpx.TimeoutException:
+            logger.error(f"LLM API call timed out after {self.timeout}s")
+            return None
+        except httpx.HTTPStatusError as e:
+            logger.error(f"LLM API returned HTTP {e.response.status_code}: {e.response.text[:200]}")
+            return None
         except httpx.HTTPError as e:
             logger.error(f"HTTP error calling LLM: {e}")
             return None
@@ -138,7 +168,7 @@ Rules:
             logger.error(f"Error parsing LLM response: {e}")
             return None
         except Exception as e:
-            logger.error(f"Unexpected error calling LLM: {e}")
+            logger.error(f"Unexpected error calling LLM: {e}", exc_info=True)
             return None
 
     def _merge_analysis(
@@ -148,20 +178,25 @@ Rules:
     ) -> CompanyInfo:
         """Merge AI analysis with initial company info."""
         # Update fields with AI-generated content
-        if "industry" in analysis:
-            initial_info.industry = analysis["industry"] or "Not Found"
+        if "industry" in analysis and analysis.get("industry"):
+            initial_info.industry = analysis["industry"]
+            logger.debug(f"AI set industry: {initial_info.industry}")
 
-        if "description" in analysis:
-            initial_info.description = analysis["description"] or initial_info.description
+        if "description" in analysis and analysis.get("description"):
+            initial_info.description = analysis["description"]
+            logger.debug(f"AI set description: {initial_info.description[:100]}...")
 
-        if "services" in analysis and analysis["services"]:
+        if "services" in analysis and analysis.get("services"):
             initial_info.services = analysis["services"]
+            logger.debug(f"AI set services ({len(initial_info.services)} items)")
 
-        if "technologies" in analysis and analysis["technologies"]:
+        if "technologies" in analysis and analysis.get("technologies"):
             initial_info.technologies = analysis["technologies"]
+            logger.debug(f"AI set technologies ({len(initial_info.technologies)} items)")
 
-        if "overview" in analysis:
-            initial_info.overview = analysis["overview"] or "Not Found"
+        if "overview" in analysis and analysis.get("overview"):
+            initial_info.overview = analysis["overview"]
+            logger.debug(f"AI set overview: {initial_info.overview[:100]}...")
 
         return initial_info
 

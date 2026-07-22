@@ -5,9 +5,9 @@ This module defines all data models used throughout the application,
 ensuring type safety and validation.
 """
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 
@@ -55,7 +55,7 @@ class CompanyMetadata(BaseModel):
 
     source: str = Field(default="Official Website", description="Data source")
     confidence: int = Field(default=100, description="Confidence score (0-100)")
-    retrieved_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    retrieved_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     status: str = Field(default=TaskStatus.SUCCESS.value, description="Retrieval status")
 
 
