@@ -1,0 +1,23 @@
+# Company Information Intelligence Engine - Dependencies
+
+# Web Framework
+streamlit>=1.28.0
+
+# Async HTTP Client
+httpx>=0.25.0
+
+# HTML Parsing
+beautifulsoup4>=4.12.0
+
+# Web Search
+ddgs>=4.1.0
+
+# Data Validation
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Domain Extraction
+tldextract>=5.0.0
+
+# Utilities
+python-dotenv>=1.0.0
