@@ -51,7 +51,8 @@ async def health_check():
     "/enrich",
     response_model=EnrichmentResponse,
     summary="Enrich Company Information",
-    description="Search, scrape, and analyze company information from their official website.",
+    description="Search, scrape, and analyze company information from their official website. "
+                "Supports geo-context for disambiguating same-name companies via region/country.",
     responses={
         200: {"model": EnrichmentResponse, "description": "Successful enrichment"},
         422: {"model": ErrorResponse, "description": "Validation error"},
@@ -61,13 +62,19 @@ async def health_check():
 async def enrich_company(request: EnrichmentRequest):
     """
     Enrich company information by:
-    1. Searching for the official website
+    1. Searching for the official website (with optional geo-context)
     2. Scraping homepage, about, and contact pages
     3. Extracting structured information
     4. Optionally analyzing with AI/LLM
 
+    Geo-context disambiguation:
+    - Provide `region` (e.g., "India") to prefer region-specific websites
+    - Provide `country` (e.g., "IN") as ISO code for precise geo-targeting
+    - If confidence is low and an API key is provided, AI will pick the best URL
+    - Without geo params, behavior is identical to original (backward compatible)
+
     Args:
-        request: EnrichmentRequest with company_name and optional api_key
+        request: EnrichmentRequest with company_name, optional api_key, region, country
 
     Returns:
         EnrichmentResponse containing company details and metadata
@@ -80,13 +87,18 @@ async def enrich_company(request: EnrichmentRequest):
             detail="company_name is required and cannot be empty",
         )
 
-    logger.info(f"Received enrichment request for: '{company_name}'")
+    logger.info(
+        f"Received enrichment request for: '{company_name}' "
+        f"(region={request.region}, country={request.country})"
+    )
 
     try:
-        # Run the enrichment pipeline
+        # Run the enrichment pipeline with geo params
         result = await run_enrichment_pipeline(
             company_name=company_name,
             llm_api_key=request.api_key,
+            region=request.region,
+            country=request.country,
         )
 
         # Build the response

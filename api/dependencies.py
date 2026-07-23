@@ -43,6 +43,8 @@ def get_services():
 async def run_enrichment_pipeline(
     company_name: str,
     llm_api_key: Optional[str] = None,
+    region: Optional[str] = None,
+    country: Optional[str] = None,
     progress_callback=None
 ):
     """
@@ -51,6 +53,8 @@ async def run_enrichment_pipeline(
     Args:
         company_name: Name of the company to analyze
         llm_api_key: Optional OpenAI API key for AI analysis
+        region: Optional geographic region for same-name disambiguation (e.g., "India")
+        country: Optional ISO country code for geo-targeting (e.g., "IN")
         progress_callback: Optional async callable(status, progress) for logging progress
 
     Returns:
@@ -80,8 +84,12 @@ async def run_enrichment_pipeline(
     try:
         await _log(1, log_steps[0][1])
 
-        # Step 1: Search for official website
-        official_url = await search_service.search_official_website(company_name)
+        # Step 1: Search for official website with geo-context
+        official_url = await search_service.search_official_website(
+            company_name,
+            region=region,
+            country=country,
+        )
 
         if not official_url:
             await _log(6, "No official website found")

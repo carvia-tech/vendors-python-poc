@@ -13,6 +13,10 @@ class EnrichmentRequest(BaseModel):
     Attributes:
         company_name: Name of the company to enrich
         api_key: Optional OpenAI API key for AI-powered analysis
+        region: Optional geographic region/territory to disambiguate same-name companies
+                (e.g., "India", "USA", "Europe")
+        country: Optional ISO country code for precise geo-targeting
+                 (e.g., "IN", "US", "GB", "DE")
     """
 
     company_name: str = Field(
@@ -27,12 +31,27 @@ class EnrichmentRequest(BaseModel):
         description="Optional OpenAI API key for AI-powered enrichment",
         examples=["sk-..."],
     )
+    region: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Geographic region for company disambiguation (e.g., 'India', 'USA', 'Europe')",
+        examples=["India", "USA", "Europe"],
+    )
+    country: Optional[str] = Field(
+        None,
+        max_length=2,
+        min_length=2,
+        description="ISO 3166-1 alpha-2 country code for precise geo-targeting",
+        examples=["IN", "US", "GB", "DE"],
+    )
 
     class Config:
         json_schema_extra = {
             "example": {
-                "company_name": "Infosys",
+                "company_name": "Amazon",
                 "api_key": "sk-your-api-key-here",
+                "region": "India",
+                "country": "IN",
             }
         }
 
