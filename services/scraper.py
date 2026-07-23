@@ -88,12 +88,15 @@ class ScraperService:
                     raw_text=""
                 )
 
-                # Extract emails and phones from all text content
-                all_text = " ".join(content.paragraphs)
-                content.emails = extract_emails(all_text)
-                content.phones = extract_phones(all_text)
+                # Extract emails and phones from ALL visible text on page,
+                # not just <p> tags - this catches contact info in
+                # divs, spans, footers, sections, list items, etc.
+                all_visible_text = self._extract_all_visible_text(soup)
+                content.emails = extract_emails(all_visible_text)
+                content.phones = extract_phones(all_visible_text)
 
                 # Store truncated raw text
+                all_text = " ".join(content.paragraphs)
                 content.raw_text = truncate_text(all_text, settings.scraping_max_content_length)
 
                 logger.info(f"Successfully scraped: {url}")
@@ -161,6 +164,28 @@ class ScraperService:
             if text:
                 headings.append(text)
         return headings
+
+    def _extract_all_visible_text(self, soup: BeautifulSoup) -> str:
+        """
+        Extract ALL visible text from the page body (not just <p> tags).
+        This captures phones, addresses, and contact info that may be
+        in <div>, <span>, <footer>, <a>, <li>, <section>, etc.
+
+        Many modern websites put contact details outside <p> tags,
+        so scanning only paragraphs misses them. This method grabs
+        everything visible in the body.
+        """
+        # Remove non-visible elements
+        for element in soup(["script", "style", "noscript", "iframe"]):
+            element.decompose()
+
+        body = soup.find("body")
+        if not body:
+            return ""
+
+        text = body.get_text(separator=" ", strip=True)
+        text = clean_html_text(text)
+        return text
 
     def _extract_paragraphs(self, soup: BeautifulSoup) -> List[str]:
         """Extract all paragraph text."""
