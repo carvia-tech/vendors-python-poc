@@ -5,7 +5,6 @@ Provides shared service instances for the API endpoints.
 """
 
 import logging
-from typing import Optional
 
 # Will be lazily initialized
 _search_service = None
@@ -42,7 +41,6 @@ def get_services():
 
 async def run_enrichment_pipeline(
     company_name: str,
-    llm_api_key: Optional[str] = None,
     progress_callback=None
 ):
     """
@@ -50,7 +48,6 @@ async def run_enrichment_pipeline(
 
     Args:
         company_name: Name of the company to analyze
-        llm_api_key: Optional OpenAI API key for AI analysis
         progress_callback: Optional async callable(status, progress) for logging progress
 
     Returns:
@@ -128,11 +125,9 @@ async def run_enrichment_pipeline(
             special_pages=special_pages
         )
 
-        # Step 6: AI Analysis (if API key provided)
-        api_key = llm_api_key or settings.llm_api_key
-        if api_key:
-            # Temporarily set the API key for the AI service
-            ai_service.api_key = api_key
+        # Step 6: AI Analysis (using the server-configured API key only)
+        if settings.llm_api_key:
+            ai_service.api_key = settings.llm_api_key
             combined_content = extractor_service.combine_content_for_ai(
                 homepage_content, about_content, contact_content
             )

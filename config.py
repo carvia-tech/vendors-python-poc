@@ -5,6 +5,8 @@ This module contains all configuration settings including API endpoints,
 search settings, and LLM configuration.
 """
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
 from typing import Optional
 
@@ -57,7 +59,9 @@ class Settings(BaseSettings):
     ]
 
     class Config:
-        env_file = ".env"
+        # Keep credentials outside the service directory.  This lets the API
+        # receive only business data, never an LLM credential from callers.
+        env_file = Path(__file__).resolve().parent.parent / ".env"
         env_file_encoding = "utf-8"
 
 

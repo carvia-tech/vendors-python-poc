@@ -11,7 +11,7 @@ This **FastAPI microservice** provides REST API endpoints that Java backends can
 ```java
 // Java calls the Python microservice
 POST http://python-service:8000/api/enrich
-Body: { "company_name": "Infosys", "api_key": "sk-..." }
+Body: { "company_name": "Infosys" }
 
 // Response is ready-to-use JSON
 {
@@ -94,12 +94,11 @@ Enrich company information by searching, scraping, and analyzing.
 **Request:**
 ```json
 {
-  "company_name": "Infosys",
-  "api_key": "sk-your-openai-key-here"
+  "company_name": "Infosys"
 }
 ```
 
-`api_key` is optional. Without it, AI analysis is skipped.
+The API key is configured on the server through `LLM_API_KEY` in the repository-level `.env`; it is never sent in an API request. Without it, AI analysis is skipped.
 
 **Response:**
 ```json
@@ -143,8 +142,7 @@ Enrich company information by searching, scraping, and analyzing.
 The service works without an API key. Industry and overview will show "Not Found".
 
 ### With AI Analysis
-1. Pass `api_key` in the request body
-2. Or set `LLM_API_KEY` environment variable
+Set `LLM_API_KEY` in the repository-level `.env` file.
 3. Uses GPT-4o-mini for intelligent analysis
 
 All settings can be configured via `.env` file or environment variables:
@@ -212,7 +210,7 @@ curl -X POST http://localhost:8000/api/enrich \
 # Enrich with AI
 curl -X POST http://localhost:8000/api/enrich \
   -H "Content-Type: application/json" \
-  -d '{"company_name": "Infosys", "api_key": "sk-..."}'
+  -d '{"company_name": "Infosys"}'
 ```
 
 ## 🏗️ Adding New Data Sources (Scalability)

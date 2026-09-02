@@ -86,7 +86,6 @@ async def enrich_company(request: EnrichmentRequest):
         # Run the enrichment pipeline
         result = await run_enrichment_pipeline(
             company_name=company_name,
-            llm_api_key=request.api_key,
         )
 
         # Build the response

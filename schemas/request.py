@@ -3,7 +3,6 @@ Request schemas for the Company Intelligence Engine API.
 """
 
 from pydantic import BaseModel, Field
-from typing import Optional
 
 
 class EnrichmentRequest(BaseModel):
@@ -12,7 +11,6 @@ class EnrichmentRequest(BaseModel):
 
     Attributes:
         company_name: Name of the company to enrich
-        api_key: Optional OpenAI API key for AI-powered analysis
     """
 
     company_name: str = Field(
@@ -22,17 +20,12 @@ class EnrichmentRequest(BaseModel):
         description="Name of the company to look up",
         examples=["Infosys", "Microsoft", "Google"],
     )
-    api_key: Optional[str] = Field(
-        None,
-        description="Optional OpenAI API key for AI-powered enrichment",
-        examples=["sk-..."],
-    )
-
     class Config:
+        # Reject accidental credential fields instead of silently accepting them.
+        extra = "forbid"
         json_schema_extra = {
             "example": {
                 "company_name": "Infosys",
-                "api_key": "sk-your-api-key-here",
             }
         }
 
