@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import settings
 from api.routes.enrichment import router as enrichment_router
+from api.routes.search import router as search_router
 from utils import setup_logging
 
 logger = setup_logging()
@@ -61,4 +62,5 @@ app.add_middleware(
 
 # Register routers
 app.include_router(enrichment_router, prefix="/api", tags=["Enrichment"])
+app.include_router(search_router, prefix="/api", tags=["Search"])
 

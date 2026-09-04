@@ -39,8 +39,38 @@ def get_services():
     return _search_service, _extractor_service, _ai_service
 
 
+async def search_companies_pipeline(company_name: str):
+    """
+    Run the disambiguation search for a company name.
+
+    Finds every distinct entity found under the given name (the official
+    company plus any name collisions, e.g. an unrelated crypto token),
+    optionally refined by AI when an LLM key is configured.
+
+    Args:
+        company_name: Name of the company to disambiguate
+
+    Returns:
+        List of CompanyCandidate
+    """
+    from config import settings
+
+    search_service, _extractor_service, ai_service = get_services()
+
+    candidates, raw_results = await search_service.search_companies(company_name)
+
+    if settings.llm_api_key and candidates:
+        ai_service.api_key = settings.llm_api_key
+        candidates = await ai_service.classify_company_candidates(
+            company_name, candidates, raw_results
+        )
+
+    return candidates
+
+
 async def run_enrichment_pipeline(
     company_name: str,
+    website: str = None,
     progress_callback=None
 ):
     """
@@ -48,6 +78,8 @@ async def run_enrichment_pipeline(
 
     Args:
         company_name: Name of the company to analyze
+        website: Optional pre-selected website (e.g. from search_companies_pipeline).
+            When set, the search step is skipped and this site is scraped directly.
         progress_callback: Optional async callable(status, progress) for logging progress
 
     Returns:
@@ -57,6 +89,7 @@ async def run_enrichment_pipeline(
     from models import CompanyInfo, CompanyMetadata, CompanyIntelligenceResponse
     from services.scraper import ScraperService
     from config import settings
+    from utils import ensure_scheme, is_valid_url
 
     search_service, extractor_service, ai_service = get_services()
 
@@ -77,8 +110,15 @@ async def run_enrichment_pipeline(
     try:
         await _log(1, log_steps[0][1])
 
-        # Step 1: Search for official website
-        official_url = await search_service.search_official_website(company_name)
+        if website:
+            # Caller already picked a candidate (e.g. from /api/search-companies) -
+            # skip the search and enrich that exact site.
+            official_url = ensure_scheme(website.strip())
+            if not is_valid_url(official_url):
+                official_url = None
+        else:
+            # Step 1: Search for official website
+            official_url = await search_service.search_official_website(company_name)
 
         if not official_url:
             await _log(6, "No official website found")

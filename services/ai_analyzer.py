@@ -9,11 +9,11 @@ consumed by the Java frontend.
 import asyncio
 import json
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 import httpx
 
-from models import CompanyInfo, CompanyMetadata
+from models import CompanyInfo, CompanyMetadata, CompanyCandidate, SearchResult
 from config import settings
 
 
@@ -199,6 +199,116 @@ Critical Rules:
             logger.debug(f"AI set overview: {initial_info.overview[:100]}...")
 
         return initial_info
+
+    async def classify_company_candidates(
+        self,
+        company_name: str,
+        candidates: List[CompanyCandidate],
+        raw_results: List[SearchResult],
+    ) -> List[CompanyCandidate]:
+        """
+        Refine disambiguation candidates with the LLM: fill in country/
+        description where the heuristics couldn't, and correctly flag
+        results that aren't actually a company profile (e.g. a news
+        article or crypto listing reusing the same name).
+
+        Falls back to the heuristic candidates unchanged if no API key is
+        configured or the LLM call fails - this step is a refinement, not
+        a requirement.
+
+        Args:
+            company_name: Name being disambiguated
+            candidates: Heuristic candidates, keyed by `website`
+            raw_results: The underlying search results for extra context
+
+        Returns:
+            Candidates with AI-refined fields, or the original list on failure
+        """
+        if not self.api_key or not candidates:
+            return candidates
+
+        logger.info(f"Classifying {len(candidates)} candidates with AI: {company_name}")
+
+        try:
+            prompt = self._build_disambiguation_prompt(company_name, raw_results)
+            response = await self._call_llm(prompt)
+
+            if response and isinstance(response.get("candidates"), list):
+                return self._merge_candidate_analysis(candidates, response["candidates"])
+
+            logger.warning("AI classification returned no usable candidates, keeping heuristics")
+            return candidates
+
+        except Exception as e:
+            logger.error(f"AI candidate classification failed for '{company_name}': {e}", exc_info=True)
+            return candidates
+
+    def _build_disambiguation_prompt(self, company_name: str, raw_results: List[SearchResult]) -> str:
+        """Build the prompt for classifying search results into distinct entities."""
+        results_block = "\n".join(
+            f"- website: {r.url}\n  title: {r.title}\n  snippet: {r.description[:300]}"
+            for r in raw_results
+        )
+
+        return f"""You are disambiguating search results for the company name "{company_name}". Some results may belong to a DIFFERENT entity that happens to share the name (e.g. a crypto token, an unrelated business, a news article about a third party). Return ONLY a valid JSON object, no markdown, no extra text.
+
+Search results:
+{results_block}
+
+Return a JSON object with this exact structure:
+{{
+  "candidates": [
+    {{
+      "website": "the exact website value from the input above",
+      "name": "the entity's actual name",
+      "country": "country the entity is based in, or null if unknown - do not guess from the TLD alone",
+      "description": "one sentence describing what this entity is, or null",
+      "type": "null if this is a genuine company profile matching '{company_name}'; otherwise a short label like 'Crypto price page', 'News article', 'Unrelated company' explaining why it is NOT a company profile"
+    }}
+  ]
+}}
+
+Critical Rules:
+- Return ONLY valid JSON - no markdown formatting, no code fences, no extra text
+- Include one entry per website from the input, matched by the exact `website` value
+- Do not hallucinate country or description - use null when the content doesn't support it
+- Set "type" only for results that are NOT a legitimate company profile
+"""
+
+    def _merge_candidate_analysis(
+        self,
+        candidates: List[CompanyCandidate],
+        analysis: List[Dict[str, Any]],
+    ) -> List[CompanyCandidate]:
+        """Merge AI-classified fields into the heuristic candidates, matched by website."""
+        by_url = {item.get("website", ""): item for item in analysis if isinstance(item, dict)}
+
+        merged = []
+        for candidate in candidates:
+            # AI results are keyed by the raw result URL; candidates may hold
+            # a bare domain (website field), so match on substring containment.
+            match = by_url.get(candidate.website)
+            if not match:
+                match = next(
+                    (item for url, item in by_url.items() if candidate.website in url or url in candidate.website),
+                    None,
+                )
+
+            if not match:
+                merged.append(candidate)
+                continue
+
+            resolved_type = match.get("type") or candidate.type
+            merged.append(CompanyCandidate(
+                name=match.get("name") or candidate.name,
+                website=candidate.website,
+                # A non-company result carries `type` instead of country/description.
+                country=None if resolved_type else (match.get("country") or candidate.country),
+                description=None if resolved_type else (match.get("description") or candidate.description),
+                type=resolved_type,
+            ))
+
+        return merged
 
     async def analyze_without_api(self, initial_info: CompanyInfo) -> CompanyInfo:
         """Return initial info when no API key is available."""

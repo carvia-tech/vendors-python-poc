@@ -86,6 +86,7 @@ async def enrich_company(request: EnrichmentRequest):
         # Run the enrichment pipeline
         result = await run_enrichment_pipeline(
             company_name=company_name,
+            website=request.website.strip() if request.website else None,
         )
 
         # Build the response

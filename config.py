@@ -36,10 +36,19 @@ class Settings(BaseSettings):
     search_max_results: int = 10
     search_timeout: int = 10
 
+    # Disambiguation Settings
+    disambiguation_max_candidates: int = 5
+
     # Scraping Settings
     scraping_timeout: int = 15
     scraping_max_retries: int = 2
     scraping_max_content_length: int = 50000  # Limit text to avoid huge prompts
+
+    # When a static (httpx) scrape comes back too thin - e.g. a JS-only or
+    # geo-redirect-gated page like prolifics.com - retry once with a
+    # headless browser that actually executes the page's JavaScript.
+    scraping_playwright_fallback: bool = True
+    scraping_playwright_timeout_ms: int = 20000
 
     # Exclude domains
     excluded_domains: list[str] = [

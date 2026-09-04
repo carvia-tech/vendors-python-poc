@@ -4,8 +4,8 @@ Company Information Intelligence Engine - Streamlit Demo Application
 
 import asyncio
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
+from typing import List, Optional
 
 import streamlit as st
 
@@ -13,11 +13,8 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import settings
-from models import CompanyInfo, CompanyMetadata, CompanyIntelligenceResponse
-from services.search import SearchService
-from services.scraper import ScraperService
-from services.extractor import ExtractorService
-from services.ai_analyzer import AIAnalyzerService
+from models import CompanyCandidate, CompanyIntelligenceResponse
+from api.dependencies import search_companies_pipeline, run_enrichment_pipeline
 from utils import setup_logging
 
 
@@ -29,11 +26,6 @@ st.set_page_config(page_title="Company Intelligence", page_icon="🏢", layout="
 class CompanyIntelligenceApp:
     """Main application class."""
 
-    def __init__(self):
-        self.search_service = SearchService()
-        self.extractor_service = ExtractorService()
-        self.ai_service = AIAnalyzerService()
-
     def run(self):
         st.title("🏢 Company Information Intelligence Engine")
         st.markdown("---")
@@ -44,6 +36,10 @@ class CompanyIntelligenceApp:
             if api_key:
                 settings.llm_api_key = api_key
 
+        st.session_state.setdefault("candidates", None)
+        st.session_state.setdefault("query", "")
+        st.session_state.setdefault("result", None)
+
         # Main interface
         col1, col2 = st.columns([4, 1])
         with col1:
@@ -52,103 +48,83 @@ class CompanyIntelligenceApp:
             search_button = st.button("Search", type="primary", use_container_width=True)
 
         if search_button and company_name:
-            self.run_analysis(company_name)
+            st.session_state.result = None
+            self.run_search(company_name)
 
-    def run_analysis(self, company_name: str):
+        if st.session_state.result is not None:
+            if st.button("🔄 New Search"):
+                st.session_state.result = None
+                st.session_state.candidates = None
+                st.rerun()
+            self._display_results(st.session_state.result)
+        elif st.session_state.candidates is not None:
+            self._display_disambiguation(st.session_state.query, st.session_state.candidates)
+
+    def run_search(self, company_name: str):
+        """Search for candidates matching the name, disambiguating if needed."""
+        with st.spinner(f"Searching for '{company_name}'..."):
+            candidates = asyncio.run(search_companies_pipeline(company_name))
+
+        st.session_state.query = company_name
+
+        # An unambiguous single legitimate match - skip straight to
+        # enrichment. Anything else (multiple entries, or the only result
+        # being a non-company page like a crypto ticker) surfaces the
+        # picker so the user can see what was actually found.
+        if len(candidates) == 1 and not candidates[0].type:
+            st.session_state.candidates = None
+            self.run_analysis(company_name, candidates[0].website)
+        else:
+            st.session_state.candidates = candidates
+
+    def _display_disambiguation(self, company_name: str, candidates: List[CompanyCandidate]):
+        st.markdown("---")
+
+        if not candidates:
+            st.warning(f"No results found for '{company_name}'.")
+            return
+
+        st.subheader(f'Multiple matches for "{company_name}" — pick one')
+
+        for idx, candidate in enumerate(candidates):
+            with st.container(border=True):
+                cols = st.columns([4, 1])
+                with cols[0]:
+                    st.markdown(f"**{candidate.name}**")
+                    st.caption(f"🌐 {candidate.website}")
+                    if candidate.type:
+                        st.caption(f"⚠️ {candidate.type} — not a company profile")
+                    else:
+                        if candidate.country:
+                            st.caption(f"📍 {candidate.country}")
+                        if candidate.description:
+                            st.caption(candidate.description)
+                with cols[1]:
+                    if st.button(
+                        "Get Details",
+                        key=f"select_candidate_{idx}",
+                        disabled=bool(candidate.type),
+                        use_container_width=True,
+                    ):
+                        st.session_state.candidates = None
+                        self.run_analysis(company_name, candidate.website)
+                        st.rerun()
+
+    def run_analysis(self, company_name: str, website: Optional[str] = None):
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-        result = asyncio.run(self._analyze_company(company_name, progress_bar, status_text))
-
-        if result:
-            self._display_results(result)
-
-    async def _analyze_company(self, company_name: str, progress_bar, status_text):
-        def update_progress(step: int, message: str):
+        async def progress_callback(step: int, message: str):
             progress_bar.progress(step / 6)
             status_text.text(message)
-            logger.info(message)
 
-        try:
-            update_progress(1, "Searching web...")
-            official_url = await self.search_service.search_official_website(company_name)
+        result = asyncio.run(run_enrichment_pipeline(
+            company_name=company_name,
+            website=website,
+            progress_callback=progress_callback,
+        ))
 
-            if not official_url:
-                update_progress(6, "No official website found")
-                return self._create_failed_response(company_name, "No official website found")
-
-            update_progress(2, f"Found: {official_url}")
-
-            async with ScraperService() as scraper:
-                update_progress(3, "Scraping homepage...")
-                homepage_content = await scraper.scrape_page(official_url)
-                special_pages = await scraper.find_special_pages(official_url)
-
-                update_progress(4, "Scraping additional pages...")
-                pages_to_scrape = []
-                about_url = special_pages.get("about")
-                contact_url = special_pages.get("contact")
-
-                if about_url and about_url != "Not Found":
-                    pages_to_scrape.append(about_url)
-                if contact_url and contact_url != "Not Found":
-                    pages_to_scrape.append(contact_url)
-
-                scraped_pages = await scraper.scrape_multiple_pages(pages_to_scrape)
-                about_content = scraped_pages.get(about_url) if about_url in scraped_pages else None
-                contact_content = scraped_pages.get(contact_url) if contact_url in scraped_pages else None
-
-                update_progress(5, "Extracting information...")
-                company_info = self.extractor_service.extract_company_info(
-                    homepage_content=homepage_content,
-                    about_content=about_content,
-                    contact_content=contact_content,
-                    careers_content=None,
-                    special_pages=special_pages
-                )
-
-                if settings.llm_api_key:
-                    combined_content = self.extractor_service.combine_content_for_ai(
-                        homepage_content, about_content, contact_content
-                    )
-                    company_info = await self.ai_service.analyze_company(
-                        company_name, combined_content, company_info
-                    )
-                else:
-                    company_info.industry = "Not Found"
-                    company_info.overview = "Not Found"
-
-                update_progress(6, "Complete!")
-
-                metadata = CompanyMetadata(
-                    source="Official Website",
-                    confidence=100,
-                    retrieved_at=datetime.now(timezone.utc).isoformat(),
-                    status="Success"
-                )
-
-                return CompanyIntelligenceResponse(company=company_info, metadata=metadata)
-
-        except Exception as e:
-            logger.error(f"Analysis failed: {e}")
-            update_progress(6, f"Failed: {str(e)}")
-            return self._create_failed_response(company_name, str(e))
-
-    def _create_failed_response(self, company_name: str, error: str) -> CompanyIntelligenceResponse:
-        company_info = CompanyInfo(
-            name=company_name,
-            industry="Not Found",
-            description="Analysis failed",
-            website="",
-            overview=f"Analysis failed: {error}"
-        )
-        metadata = CompanyMetadata(
-            source="Analysis Failed",
-            confidence=0,
-            retrieved_at=datetime.now(timezone.utc).isoformat(),
-            status="Failed"
-        )
-        return CompanyIntelligenceResponse(company=company_info, metadata=metadata)
+        st.session_state.result = result
 
     def _display_results(self, result: CompanyIntelligenceResponse):
         st.markdown("---")

@@ -87,3 +87,20 @@ class SearchResult(BaseModel):
     url: str
     description: str
     is_official: bool = False
+
+
+class CompanyCandidate(BaseModel):
+    """
+    A single disambiguation candidate returned by /api/search-companies.
+
+    `type` is populated only when the result is NOT a company profile
+    (e.g. a crypto price page or news article reusing the same name) -
+    such candidates should not be sent to /api/enrich. Legitimate company
+    candidates instead carry `country`/`description` and omit `type`.
+    """
+
+    name: str = Field(description="Company or entity name")
+    website: str = Field(description="Website (or page path, for non-company results) to enrich")
+    country: Optional[str] = Field(default=None, description="Country of the company, if determinable")
+    description: Optional[str] = Field(default=None, description="Short description of the company")
+    type: Optional[str] = Field(default=None, description="Set when this is NOT a company profile, e.g. 'Crypto price page'")
