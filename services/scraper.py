@@ -36,6 +36,8 @@ class ScraperService:
     def __init__(self):
         """Initialize the scraper service."""
         self.client: Optional[httpx.AsyncClient] = None
+        self._playwright = None
+        self._browser = None
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -52,6 +54,98 @@ class ScraperService:
         """Async context manager exit."""
         if self.client:
             await self.client.aclose()
+        if self._browser:
+            await self._browser.close()
+        if self._playwright:
+            await self._playwright.stop()
+
+    def _is_thin_content(self, content: ScrapedContent) -> bool:
+        """
+        Detect a scrape that's suspiciously empty - typically a JS-only
+        single-page app or a client-side geo-redirect gate (e.g.
+        prolifics.com), where the static HTML has no real content until
+        JavaScript runs. No on-page links AND almost no visible text is a
+        strong signal a real homepage wouldn't produce.
+        """
+        return not content.links and len(content.raw_text.strip()) < 200
+
+    async def _render_with_browser(self, url: str) -> Optional[str]:
+        """
+        Render a page with a headless browser so its JavaScript actually
+        runs, for pages a plain HTTP GET can't get real content from.
+
+        Returns the rendered HTML, or None if rendering isn't available or fails.
+        """
+        try:
+            if self._browser is None:
+                from playwright.async_api import async_playwright
+
+                self._playwright = await async_playwright().start()
+                self._browser = await self._playwright.chromium.launch(headless=True)
+
+            page = await self._browser.new_page(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            )
+            try:
+                # networkidle is unreliable on real sites - trackers/analytics
+                # (GTM, HubSpot, LinkedIn Insight, etc.) keep making requests
+                # forever, so it just times out. domcontentloaded + a settle
+                # window (which also gives client-side redirects, like
+                # prolifics.com's geo-redirect gate, time to land) is more robust.
+                await page.goto(url, timeout=settings.scraping_playwright_timeout_ms, wait_until="domcontentloaded")
+                try:
+                    await page.wait_for_load_state("load", timeout=settings.scraping_playwright_timeout_ms)
+                except Exception:
+                    pass  # good enough - fall through and grab whatever rendered
+                await page.wait_for_timeout(2000)
+
+                # A client-side redirect can still be landing when we ask for
+                # content(), which raises rather than blocking - retry briefly.
+                for attempt in range(3):
+                    try:
+                        return await page.content()
+                    except Exception:
+                        if attempt == 2:
+                            raise
+                        await page.wait_for_timeout(1500)
+            finally:
+                await page.close()
+
+        except ImportError:
+            logger.warning("Playwright is not installed; skipping headless-browser fallback")
+            return None
+        except Exception as e:
+            logger.warning(f"Headless-browser render failed for {url}: {e}")
+            return None
+
+    def _build_content(self, url: str, html: str) -> ScrapedContent:
+        """Parse raw HTML into structured ScrapedContent."""
+        soup = BeautifulSoup(html, "html.parser")
+
+        content = ScrapedContent(
+            url=url,
+            title=self._extract_title(soup),
+            description=self._extract_meta_description(soup),
+            headings=self._extract_headings(soup),
+            paragraphs=self._extract_paragraphs(soup),
+            links=self._extract_links(soup, url),
+            emails=[],
+            phones=[],
+            raw_text=""
+        )
+
+        # Extract emails and phones from ALL visible text on page,
+        # not just <p> tags - this catches contact info in
+        # divs, spans, footers, sections, list items, etc.
+        all_visible_text = self._extract_all_visible_text(soup)
+        content.emails = extract_emails(all_visible_text)
+        content.phones = extract_phones(all_visible_text)
+
+        # Store truncated raw text
+        all_text = " ".join(content.paragraphs)
+        content.raw_text = truncate_text(all_text, settings.scraping_max_content_length)
+
+        return content
 
     async def scrape_page(self, url: str, max_retries: int = 2) -> Optional[ScrapedContent]:
         """
@@ -74,27 +168,15 @@ class ScraperService:
                 response = await self.client.get(url)
                 response.raise_for_status()
 
-                soup = BeautifulSoup(response.text, "html.parser")
+                content = self._build_content(url, response.text)
 
-                content = ScrapedContent(
-                    url=url,
-                    title=self._extract_title(soup),
-                    description=self._extract_meta_description(soup),
-                    headings=self._extract_headings(soup),
-                    paragraphs=self._extract_paragraphs(soup),
-                    links=self._extract_links(soup, url),
-                    emails=[],
-                    phones=[],
-                    raw_text=""
-                )
-
-                # Extract emails and phones from all text content
-                all_text = " ".join(content.paragraphs)
-                content.emails = extract_emails(all_text)
-                content.phones = extract_phones(all_text)
-
-                # Store truncated raw text
-                content.raw_text = truncate_text(all_text, settings.scraping_max_content_length)
+                if settings.scraping_playwright_fallback and self._is_thin_content(content):
+                    logger.info(f"Static scrape too thin for {url}, retrying with headless browser")
+                    rendered_html = await self._render_with_browser(url)
+                    if rendered_html:
+                        rendered_content = self._build_content(url, rendered_html)
+                        if not self._is_thin_content(rendered_content):
+                            content = rendered_content
 
                 logger.info(f"Successfully scraped: {url}")
                 return content
@@ -161,6 +243,28 @@ class ScraperService:
             if text:
                 headings.append(text)
         return headings
+
+    def _extract_all_visible_text(self, soup: BeautifulSoup) -> str:
+        """
+        Extract ALL visible text from the page body (not just <p> tags).
+        This captures phones, addresses, and contact info that may be
+        in <div>, <span>, <footer>, <a>, <li>, <section>, etc.
+
+        Many modern websites put contact details outside <p> tags,
+        so scanning only paragraphs misses them. This method grabs
+        everything visible in the body.
+        """
+        # Remove non-visible elements
+        for element in soup(["script", "style", "noscript", "iframe"]):
+            element.decompose()
+
+        body = soup.find("body")
+        if not body:
+            return ""
+
+        text = body.get_text(separator=" ", strip=True)
+        text = clean_html_text(text)
+        return text
 
     def _extract_paragraphs(self, soup: BeautifulSoup) -> List[str]:
         """Extract all paragraph text."""

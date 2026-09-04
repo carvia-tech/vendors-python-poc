@@ -6,6 +6,7 @@ structured information about the company.
 """
 
 import logging
+import re
 from typing import List, Dict, Optional, Any
 
 from models import ScrapedContent, CompanyInfo
@@ -97,7 +98,6 @@ class ExtractorService:
         """Extract company name from title."""
         title = content.title
         if title:
-            # Remove common suffixes and separators
             for suffix in [
                 " - Home", " | Home", " - Official Site", " | Official Site",
                 " | ", " - ", " – ", " — ",
@@ -133,13 +133,38 @@ class ExtractorService:
         return sorted(list(phones))
 
     def _extract_address(self, content: ScrapedContent) -> str:
-        """Extract address from contact page content."""
-        # Look for address patterns in paragraphs
+        """
+        Extract address from contact page content.
+        Searches paragraphs first, then falls back to raw_text
+        for addresses in divs, footers, sections, etc.
+        """
+        # First try paragraphs
         for paragraph in content.paragraphs:
-            # Check if paragraph looks like an address
-            if any(word in paragraph.lower() for word in ["street", "road", "suite", "floor", "ave"]):
-                if len(paragraph) < 200:  # Reasonable address length
+            addr_kw = ["street", "road", "suite", "floor", "ave", "avenue",
+                       "nagar", "sector", "phase", "colony", "layout",
+                       "building", "tower", "block", "plot", "office"]
+            if any(w in paragraph.lower() for w in addr_kw):
+                if len(paragraph) < 200:
                     return paragraph.strip()
+
+        # Fallback: scan full raw text with broader address patterns
+        full_text = content.raw_text or " ".join(content.paragraphs)
+        candidates = []
+        lines = re.split(r'[,\n;]', full_text)
+        cities = ["bangalore", "bengaluru", "mumbai", "delhi", "noida",
+                   "gurgaon", "pune", "hyderabad", "chennai", "kolkata"]
+        for line in lines:
+            line = line.strip()
+            if len(line) > 15:
+                lower = line.lower()
+                addr_kw = ["street", "road", "suite", "floor", "ave",
+                           "nagar", "sector", "phase", "colony", "layout",
+                           "building", "tower", "block", "plot", "office",
+                           "pincode", "pin:"]
+                if any(w in lower for w in addr_kw) or any(c in lower for c in cities) or "india" in lower:
+                    candidates.append(line)
+        if candidates:
+            return ", ".join(candidates[:4])
         return "Not Found"
 
     def _extract_social_links(self, content: ScrapedContent) -> Dict[str, str]:
@@ -176,20 +201,17 @@ class ExtractorService:
 
         for keyword in service_keywords:
             if keyword in all_text_lower:
-                # Find the full service name context
                 for paragraph in content:
                     if keyword in paragraph.lower():
-                        # Extract a reasonable service description
                         words = paragraph.split()
                         for i, word in enumerate(words):
                             if keyword in word.lower() and len(word) > 3:
-                                # Get surrounding words for context
                                 start = max(0, i - 1)
                                 end = min(len(words), i + 2)
                                 service = " ".join(words[start:end])
                                 found_services.add(service.capitalize())
                                 break
-                        if len(found_services) >= 5:  # Limit services
+                        if len(found_services) >= 5:
                             break
                 if len(found_services) >= 5:
                     break
@@ -235,7 +257,6 @@ class ExtractorService:
 
         for line in lines:
             if not any(pattern.lower() in line.lower() for pattern in unwanted_patterns):
-                # Also filter very short or repetitive lines
                 if len(line.strip()) > 15:
                     filtered_lines.append(line.strip())
 
@@ -261,7 +282,6 @@ class ExtractorService:
         """
         sections = []
 
-        # Filter patterns to exclude
         unwanted_patterns = [
             "Special characters are not allowed",
             "Maximum length:",
@@ -274,7 +294,6 @@ class ExtractorService:
         ]
 
         def filter_paragraphs(paragraphs: List[str]) -> List[str]:
-            """Filter out unwanted paragraphs."""
             filtered = []
             for p in paragraphs:
                 if not any(pattern.lower() in p.lower() for pattern in unwanted_patterns):

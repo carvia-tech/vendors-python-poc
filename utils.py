@@ -256,6 +256,76 @@ def is_careers_page(url: str) -> bool:
     return any(keyword in path for keyword in careers_keywords)
 
 
+_TLD_COUNTRY_MAP = {
+    "in": "India", "us": "USA", "uk": "United Kingdom", "co.uk": "United Kingdom",
+    "ca": "Canada", "au": "Australia", "de": "Germany", "fr": "France",
+    "sg": "Singapore", "jp": "Japan", "cn": "China", "nl": "Netherlands",
+    "ch": "Switzerland", "ie": "Ireland", "es": "Spain", "it": "Italy",
+    "br": "Brazil", "mx": "Mexico", "ae": "UAE", "za": "South Africa",
+    "nz": "New Zealand", "se": "Sweden", "no": "Norway", "dk": "Denmark",
+    "kr": "South Korea", "hk": "Hong Kong", "il": "Israel", "ru": "Russia",
+}
+
+# Generic TLDs give no reliable signal about country (a .com/.io site can be
+# registered anywhere), so only unambiguous country-code TLDs are mapped.
+def guess_country_from_domain(domain: str) -> Optional[str]:
+    """
+    Best-effort country guess from a domain's TLD. Returns None for generic
+    TLDs (.com, .org, .io, ...) rather than guessing - that's left to AI
+    classification when an LLM key is configured.
+    """
+    try:
+        extracted = tldextract.extract(domain)
+        suffix = extracted.suffix.lower()
+    except Exception:
+        return None
+    return _TLD_COUNTRY_MAP.get(suffix)
+
+
+_CRYPTO_DOMAIN_HINTS = [
+    "mexc", "binance", "coinbase", "kucoin", "coingecko", "coinmarketcap",
+    "okx", "bybit", "kraken", "gate.io", "huobi", "bitfinex",
+]
+_CRYPTO_PATH_HINTS = ["/price/", "/token/", "/currencies/", "/coin/"]
+_NEWS_DOMAIN_HINTS = [
+    "prnewswire", "businesswire", "techcrunch", "reuters", "finance.yahoo",
+    "marketwatch", "seekingalpha", "benzinga", "globenewswire",
+]
+_MARKETPLACE_DOMAIN_HINTS = ["amazon.", "ebay.", "alibaba.", "etsy.", "flipkart."]
+
+
+def classify_non_company_domain(domain: str, url: str) -> Optional[str]:
+    """
+    Detect results that reuse a company's name but aren't a company profile
+    (a crypto ticker page, a news article, a marketplace listing, ...).
+
+    Returns a human-readable type label, or None if the result looks like a
+    legitimate company website.
+    """
+    domain_lower = domain.lower()
+    url_lower = url.lower()
+
+    if any(h in domain_lower for h in _CRYPTO_DOMAIN_HINTS) or any(h in url_lower for h in _CRYPTO_PATH_HINTS):
+        return "Crypto price page"
+    if any(h in domain_lower for h in _NEWS_DOMAIN_HINTS):
+        return "News article"
+    if any(h in domain_lower for h in _MARKETPLACE_DOMAIN_HINTS):
+        return "Marketplace listing"
+    return None
+
+
+def ensure_scheme(url: str) -> str:
+    """Prepend https:// to a bare domain/URL that has no scheme."""
+    if "://" not in url:
+        return f"https://{url}"
+    return url
+
+
+def strip_scheme(url: str) -> str:
+    """Remove the scheme (and any trailing slash) from a URL for display."""
+    return url.split("://", 1)[-1].rstrip("/")
+
+
 def find_link_by_keywords(soup: BeautifulSoup, keywords: List[str], base_url: str) -> Optional[str]:
     """
     Find a link containing specific keywords.

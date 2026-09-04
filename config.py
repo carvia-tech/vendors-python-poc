@@ -5,6 +5,8 @@ This module contains all configuration settings including API endpoints,
 search settings, and LLM configuration.
 """
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
 from typing import Optional
 
@@ -15,6 +17,13 @@ class Settings(BaseSettings):
     # Application settings
     app_name: str = "Company Information Intelligence Engine"
     app_version: str = "1.0.0"
+
+    # FastAPI Settings
+    api_host: str = "0.0.0.0"
+    api_port: int = 8000
+    api_debug: bool = False
+    api_reload: bool = True
+    cors_origins: list[str] = ["*"]
 
     # LLM Settings
     llm_api_key: Optional[str] = None
@@ -27,10 +36,19 @@ class Settings(BaseSettings):
     search_max_results: int = 10
     search_timeout: int = 10
 
+    # Disambiguation Settings
+    disambiguation_max_candidates: int = 5
+
     # Scraping Settings
     scraping_timeout: int = 15
     scraping_max_retries: int = 2
     scraping_max_content_length: int = 50000  # Limit text to avoid huge prompts
+
+    # When a static (httpx) scrape comes back too thin - e.g. a JS-only or
+    # geo-redirect-gated page like prolifics.com - retry once with a
+    # headless browser that actually executes the page's JavaScript.
+    scraping_playwright_fallback: bool = True
+    scraping_playwright_timeout_ms: int = 20000
 
     # Exclude domains
     excluded_domains: list[str] = [
@@ -50,7 +68,9 @@ class Settings(BaseSettings):
     ]
 
     class Config:
-        env_file = ".env"
+        # Keep credentials outside the service directory.  This lets the API
+        # receive only business data, never an LLM credential from callers.
+        env_file = Path(__file__).resolve().parent.parent / ".env"
         env_file_encoding = "utf-8"
 
 

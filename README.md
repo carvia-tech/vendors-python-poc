@@ -1,14 +1,27 @@
-# Company Information Intelligence Engine
+# Company Information Intelligence Engine (FastAPI)
 
-A Streamlit demo application that searches for a company's official website, scrapes public information, and uses AI to generate structured intelligence.
+A FastAPI microservice that searches for a company's official website, scrapes public information, and uses AI to generate structured intelligence. Designed as a helper module for Java backend integration.
 
 ## 🎯 Purpose
 
-This is a **demo application for client presentation purposes only**. It demonstrates a workflow for:
-- Web search to find official company websites
-- Async web scraping with httpx and BeautifulSoup
-- Information extraction from multiple pages
-- AI-powered analysis with OpenAI-compatible LLMs
+This **FastAPI microservice** provides REST API endpoints that Java backends can call to enrich company profiles. The response JSON is directly consumable by frontend applications.
+
+### Java Backend Integration
+
+```java
+// Java calls the Python microservice
+POST http://python-service:8000/api/enrich
+Body: { "company_name": "Infosys" }
+
+// Response is ready-to-use JSON
+{
+  "success": true,
+  "data": {
+    "company": { ... full company info ... },
+    "metadata": { ... retrieval metadata ... }
+  }
+}
+```
 
 ## 🚀 Quick Start
 
@@ -16,149 +29,205 @@ This is a **demo application for client presentation purposes only**. It demonst
 # Install dependencies
 pip install -r requirements.txt
 
-# Run the application
-streamlit run app.py
+# Run the FastAPI server
+uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The application will open at `http://localhost:8501`
+The API will be available at:
+- **API**: `http://localhost:8000/api/health`
+- **Docs**: `http://localhost:8000/docs` (Swagger UI)
+- **Redoc**: `http://localhost:8000/redoc`
 
 ## 📁 Project Structure
 
 ```
 company_intelligence_demo/
 │
-├── app.py                    # Main Streamlit application
+├── api/                     # FastAPI application package
+│   ├── __init__.py
+│   ├── main.py              # FastAPI app with CORS, lifespan
+│   ├── dependencies.py      # Service initialization & enrichment pipeline
+│   └── routes/
+│       ├── __init__.py
+│       └── enrichment.py    # POST /api/enrich, GET /api/health
+│
+├── schemas/                  # API request/response schemas
+│   ├── __init__.py
+│   ├── request.py            # EnrichmentRequest
+│   └── response.py           # HealthResponse, EnrichmentResponse
+│
+├── services/                 # Core business logic (reused)
+│   ├── __init__.py
+│   ├── search.py             # Web search (DuckDuckGo)
+│   ├── scraper.py            # Web scraping (httpx, BeautifulSoup)
+│   ├── extractor.py          # Information extraction
+│   └── ai_analyzer.py        # AI analysis (LLM)
+│
 ├── config.py                 # Configuration settings
 ├── models.py                 # Pydantic data models
 ├── utils.py                  # Utility functions
 ├── requirements.txt          # Python dependencies
 ├── README.md                 # This file
-│
-└── services/
-    ├── search.py             # Web search service (DuckDuckGo)
-    ├── scraper.py            # Web scraping service (httpx, BeautifulSoup)
-    ├── extractor.py          # Information extraction service
-    └── ai_analyzer.py        # AI analysis service (LLM)
+├── start.sh                  # Linux/Mac startup script
+└── start.bat                 # Windows startup script
+```
+
+## 🔧 API Endpoints
+
+### `GET /api/health`
+
+Health check endpoint.
+
+```json
+{
+  "status": "ok",
+  "service": "Company Information Intelligence Engine",
+  "version": "1.0.0",
+  "timestamp": "2026-07-21T10:30:00Z"
+}
+```
+
+### `POST /api/enrich`
+
+Enrich company information by searching, scraping, and analyzing.
+
+**Request:**
+```json
+{
+  "company_name": "Infosys"
+}
+```
+
+The API key is configured on the server through `LLM_API_KEY` in the repository-level `.env`; it is never sent in an API request. Without it, AI analysis is skipped.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "company": {
+      "name": "Infosys Limited",
+      "website": "https://www.infosys.com",
+      "industry": "Information Technology and Consulting",
+      "description": "Infosys is a global technology company providing digital transformation, consulting, and outsourcing services.",
+      "about_page": "https://www.infosys.com/about",
+      "contact_page": "https://www.infosys.com/contact",
+      "careers_page": "https://career.infosys.com",
+      "emails": ["Not Found"],
+      "phones": ["+91-80-2852-0261"],
+      "address": "Electronics City, Hosur Road, Bengaluru, Karnataka, India",
+      "services": ["Digital Transformation", "Cloud Services"],
+      "technologies": ["Azure", "AWS", "SAP"],
+      "social_links": {
+        "linkedin": "https://www.linkedin.com/company/infosys",
+        "youtube": "https://www.youtube.com/@Infosys",
+        "twitter": "https://twitter.com/Infosys"
+      },
+      "overview": "Infosys is an Indian multinational IT services company..."
+    },
+    "metadata": {
+      "source": "Official Website",
+      "confidence": 100,
+      "retrieved_at": "2026-07-21T10:30:00Z",
+      "status": "Success"
+    }
+  },
+  "error": null
+}
 ```
 
 ## 🔧 Configuration
 
 ### Without AI (Default)
-
-The app works without an API key, but will have limited analysis:
-- Web search and scraping work fully
-- Contact information extraction works
-- Industry and overview will show "Not Found"
+The service works without an API key. Industry and overview will show "Not Found".
 
 ### With AI Analysis
+Set `LLM_API_KEY` in the repository-level `.env` file.
+3. Uses GPT-4o-mini for intelligent analysis
 
-1. Enter your OpenAI API key in the sidebar
-2. Or set the `LLM_API_KEY` environment variable
-3. The app will then use GPT-4o-mini for analysis
+All settings can be configured via `.env` file or environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LLM_API_KEY` | None | OpenAI API key |
+| `LLM_MODEL` | gpt-4o-mini | LLM model to use |
+| `API_PORT` | 8000 | FastAPI server port |
+| `API_HOST` | 0.0.0.0 | Bind address |
+| `CORS_ORIGINS` | ["*"] | Allowed CORS origins |
 
 ## 📊 Workflow
 
 ```
-User enters company name
-         ↓
-   Search Web (DuckDuckGo)
-         ↓
-Find Official Website
-         ↓
-   Scrape Homepage
-         ↓
-Find About & Contact Pages
-         ↓
-  Extract Contact Info
-         ↓
-   AI Analysis (Optional)
-         ↓
-  Generate Structured JSON
-```
-
-## 📋 Output Schema
-
-```json
-{
-  "company": {
-    "name": "Company Name",
-    "industry": "Technology",
-    "description": "Brief description",
-    "website": "https://example.com",
-    "about_page": "https://example.com/about",
-    "contact_page": "https://example.com/contact",
-    "careers_page": "Not Found",
-    "emails": ["contact@example.com"],
-    "phones": ["+1-555-1234"],
-    "address": "123 Main St, City, Country",
-    "services": ["Service 1", "Service 2"],
-    "technologies": ["Python", "React"],
-    "social_links": {
-      "linkedin": "https://linkedin.com/company/example",
-      "twitter": "https://twitter.com/example"
-    },
-    "overview": "Detailed company overview..."
-  },
-  "metadata": {
-    "source": "Official Website",
-    "confidence": 100,
-    "retrieved_at": "2024-01-01T00:00:00",
-    "status": "Success"
-  }
-}
+Java Backend
+    │
+    │  POST /api/enrich { company_name }
+    ▼
+FastAPI Microservice
+    │
+    ├── 1. Search Web (DuckDuckGo)
+    ├── 2. Find Official Website
+    ├── 3. Scrape Homepage
+    ├── 4. Find About & Contact Pages
+    ├── 5. Extract Contact Info
+    ├── 6. AI Analysis (if API key provided)
+    └── 7. Return Structured JSON
+    │
+    ▼
+Java Backend receives JSON → passes to Frontend
 ```
 
 ## 🔍 Features
 
-- **Async Web Search**: Uses DuckDuckGo Search (free, no API key needed)
-- **Async Scraping**: Concurrent page fetching with httpx
-- **Smart Filtering**: Excludes Wikipedia, LinkedIn, Crunchbase, etc.
-- **Contact Extraction**: Emails, phones, addresses
-- **Social Links**: LinkedIn, Twitter, Facebook, GitHub
-- **AI Analysis**: Structured JSON output with GPT-4o-mini
-- **Progress Indicators**: Real-time progress updates
-- **Expandable Sections**: Logs, extracted text, JSON output
-
-## ⚠️ Limitations
-
-This is a **demo application**:
-
-- No database
-- No authentication
-- No caching
-- No production optimizations
-- Basic error handling
-- Limited retry logic
-- Single-user only
+- **REST API**: Clean endpoints for Java integration
+- **Async Processing**: Non-blocking async/await throughout
+- **CORS Enabled**: Ready for cross-origin frontend calls
+- **Detailed Logging**: Step-by-step progress with timestamps
+- **Error Handling**: Graceful failures with descriptive messages
+- **Swagger Docs**: Auto-generated OpenAPI documentation at `/docs`
+- **Scalable Architecture**: Easily add LinkedIn, Government modules later
 
 ## 🛠️ Tech Stack
 
 - **Python 3.12**
-- **Streamlit** - Web UI
+- **FastAPI** - REST API framework
 - **httpx** - Async HTTP client
 - **BeautifulSoup4** - HTML parsing
 - **DuckDuckGo Search** - Web search
-- **Pydantic** - Data validation
+- **Pydantic** - Data validation & schemas
 - **OpenAI API** - AI analysis (optional)
 
-## 📝 Examples to Try
+## 📝 Examples
 
-- Microsoft
-- Infosys
-- Google
-- Amazon
-- Tesla
+```bash
+# Health check
+curl http://localhost:8000/api/health
 
-## 🤝 Contributing
+# Enrich a company (no AI)
+curl -X POST http://localhost:8000/api/enrich \
+  -H "Content-Type: application/json" \
+  -d '{"company_name": "Infosys"}'
 
-This is a demo project. For production use, you would need:
-- Database integration
-- Caching layer (Redis)
-- Rate limiting
-- Better error handling
-- Logging infrastructure
-- Monitoring
-- Tests
+# Enrich with AI
+curl -X POST http://localhost:8000/api/enrich \
+  -H "Content-Type: application/json" \
+  -d '{"company_name": "Infosys"}'
+```
+
+## 🏗️ Adding New Data Sources (Scalability)
+
+The architecture supports adding new data sources easily:
+
+1. Create `services/sources/linkedin.py`
+2. Implement a `LinkedInSource` class
+3. Add it to the pipeline in `api/dependencies.py` Example structure:
+```
+services/
+├── sources/              # Future: pluggable data sources
+│   ├── __init__.py
+│   ├── linkedin.py       # LinkedIn company page scraper
+│   └── government.py     # MCA/GST records lookup
+└── ...existing services
+```
 
 ## 📄 License
 
