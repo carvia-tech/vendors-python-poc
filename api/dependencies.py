@@ -54,6 +54,7 @@ async def search_companies_pipeline(company_name: str):
         List of CompanyCandidate
     """
     from config import settings
+    from services.search import rank_company_candidates
 
     search_service, _extractor_service, ai_service = get_services()
 
@@ -65,7 +66,12 @@ async def search_companies_pipeline(company_name: str):
             company_name, candidates, raw_results
         )
 
-    return candidates
+    # Rank after AI refinement (so demotions/promotions from AI classification
+    # are reflected) and only then truncate to the display limit, so a
+    # relevant match found later in the raw result set isn't dropped before
+    # it gets a chance to rank above earlier, less relevant ones.
+    candidates = rank_company_candidates(company_name, candidates)
+    return candidates[:settings.disambiguation_max_candidates]
 
 
 async def run_enrichment_pipeline(

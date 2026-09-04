@@ -7,6 +7,8 @@ of a company and filters out non-official sources.
 
 import asyncio
 import logging
+import re
+from difflib import SequenceMatcher
 from typing import Optional, List
 
 from ddgs import DDGS
@@ -19,10 +21,52 @@ from utils import (
     classify_non_company_domain,
     guess_country_from_domain,
     strip_scheme,
+    looks_like_url,
+    ensure_scheme,
 )
 
 
 logger = logging.getLogger("company_intelligence.search")
+
+# Generic suffixes that shouldn't count toward a name/domain relevance match
+# (e.g. "Marvell Technology" vs domain "marvell" should match on "marvell",
+# not get diluted by "technology" also needing to appear somewhere).
+_COMPANY_SUFFIX_WORDS = {
+    "inc", "incorporated", "corp", "corporation", "co", "company", "ltd",
+    "limited", "llc", "plc", "group", "technologies", "technology",
+    "holdings", "international", "global", "solutions",
+}
+
+
+def _name_tokens(text: str) -> set:
+    tokens = re.findall(r"[a-z0-9]+", text.lower())
+    return {t for t in tokens if t not in _COMPANY_SUFFIX_WORDS and len(t) > 1}
+
+
+def rank_company_candidates(company_name: str, candidates: List[CompanyCandidate]) -> List[CompanyCandidate]:
+    """
+    Rank disambiguation candidates so the legitimate company sits first.
+
+    Search-engine order is not reliable for this (a stock-quote page or
+    news article can easily outrank the official site). Candidates are
+    sorted by: (1) legitimate company profiles before non-company results,
+    (2) how much the query's name overlaps the candidate's domain - the
+    strongest signal of "this is the real site" - then (3) overall name
+    similarity as a tiebreaker. Sort is stable, so ties keep their
+    original (search-engine) relative order.
+    """
+    query_tokens = _name_tokens(company_name)
+
+    def relevance(candidate: CompanyCandidate) -> float:
+        domain_root = candidate.website.split("/", 1)[0].split(".")[0]
+        domain_tokens = _name_tokens(domain_root.replace("-", " "))
+
+        token_overlap = len(query_tokens & domain_tokens) / max(len(query_tokens), 1)
+        name_similarity = SequenceMatcher(None, company_name.lower(), candidate.name.lower()).ratio()
+
+        return token_overlap * 2 + name_similarity
+
+    return sorted(candidates, key=lambda c: (c.type is not None, -relevance(c)))
 
 
 class SearchService:
@@ -66,14 +110,26 @@ class SearchService:
         crypto token trading under the same name - so a caller can let the
         user pick the right one before calling /api/enrich.
 
+        The same input also accepts a URL directly (e.g. someone pastes
+        "marvell.com" instead of typing a name) - when it looks like one,
+        search is skipped entirely and it comes back as the sole candidate,
+        so a caller can always hit this endpoint first regardless of what
+        the user typed.
+
         Args:
-            company_name: Name of the company to search for
+            company_name: Name (or URL) of the company to search for
 
         Returns:
-            Tuple of (candidates deduplicated by domain, the raw search
-            results they were built from - reusable for AI refinement so
-            it doesn't need to re-query and risk a different result set)
+            Tuple of (candidates deduplicated by domain, not yet ranked or
+            truncated to the display limit - callers should apply
+            rank_company_candidates() then slice; the raw search results
+            they were built from, reusable for AI refinement so it doesn't
+            need to re-query and risk a different result set)
         """
+        if looks_like_url(company_name):
+            logger.info(f"Input looks like a URL, skipping search: {company_name}")
+            return [self._build_direct_url_candidate(company_name)], []
+
         logger.info(f"Searching for company candidates: {company_name}")
 
         results = await self._search(company_name)
@@ -89,11 +145,15 @@ class SearchService:
 
             candidates.append(self._build_candidate(company_name, result, domain))
 
-            if len(candidates) >= settings.disambiguation_max_candidates:
-                break
-
         logger.info(f"Found {len(candidates)} distinct candidates for: {company_name}")
         return candidates, results
+
+    def _build_direct_url_candidate(self, raw_input: str) -> CompanyCandidate:
+        """Build a single candidate directly from a pasted URL, skipping search."""
+        normalized = ensure_scheme(raw_input.strip())
+        domain = get_domain_from_url(normalized) or strip_scheme(normalized)
+        guessed_name = domain.split(".")[0].replace("-", " ").title() if domain else raw_input
+        return CompanyCandidate(name=guessed_name or raw_input, website=domain or strip_scheme(normalized))
 
     def _build_candidate(self, company_name: str, result: SearchResult, domain: str) -> CompanyCandidate:
         """Build a single disambiguation candidate from a raw search result."""

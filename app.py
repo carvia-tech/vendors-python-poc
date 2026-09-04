@@ -43,7 +43,7 @@ class CompanyIntelligenceApp:
         # Main interface
         col1, col2 = st.columns([4, 1])
         with col1:
-            company_name = st.text_input("Company Name", placeholder="e.g., Microsoft")
+            company_name = st.text_input("Company Name or Website", placeholder="e.g., Microsoft or microsoft.com")
         with col2:
             search_button = st.button("Search", type="primary", use_container_width=True)
 

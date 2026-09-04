@@ -314,6 +314,26 @@ def classify_non_company_domain(domain: str, url: str) -> Optional[str]:
     return None
 
 
+_BARE_DOMAIN_RE = re.compile(
+    r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(/\S*)?$",
+    re.IGNORECASE,
+)
+
+
+def looks_like_url(text: str) -> bool:
+    """
+    True if the input looks like a URL/domain (e.g. "marvell.com",
+    "https://marvell.com") rather than a free-text company name.
+    Lets a single search field accept either.
+    """
+    text = text.strip()
+    if not text or " " in text:
+        return False
+    if text.lower().startswith(("http://", "https://")):
+        return True
+    return bool(_BARE_DOMAIN_RE.match(text))
+
+
 def ensure_scheme(url: str) -> str:
     """Prepend https:// to a bare domain/URL that has no scheme."""
     if "://" not in url:

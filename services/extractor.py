@@ -10,7 +10,7 @@ import re
 from typing import List, Dict, Optional, Any
 
 from models import ScrapedContent, CompanyInfo
-from utils import clean_html_text, get_domain_from_url
+from utils import clean_html_text, get_domain_from_url, truncate_text
 
 
 logger = logging.getLogger("company_intelligence.extractor")
@@ -50,7 +50,7 @@ class ExtractorService:
         # Extract basic information from homepage
         if homepage_content:
             company_info.name = self._extract_company_name(homepage_content)
-            company_info.description = homepage_content.description or homepage_content.title
+            company_info.description = self._build_description(homepage_content)
             company_info.website = homepage_content.url
 
         # Combine all content for analysis
@@ -110,6 +110,35 @@ class ExtractorService:
             return title.strip()
         return "Unknown"
 
+    _BOILERPLATE_PATTERNS = ("cookie", "privacy policy", "terms of service", "all rights reserved", "copyright")
+
+    def _build_description(self, content: ScrapedContent) -> str:
+        """
+        Build a ~5-sentence description without AI.
+
+        The meta description alone is usually just one line - too thin on
+        its own - so it's used as the opening sentence, then topped up
+        with real homepage paragraphs (skipping cookie/legal boilerplate)
+        until there's enough substance.
+        """
+        parts = []
+        if content.description:
+            parts.append(content.description.strip())
+
+        for paragraph in content.paragraphs:
+            text = paragraph.strip()
+            if len(text) < 30 or text in parts:
+                continue
+            if any(pattern in text.lower() for pattern in self._BOILERPLATE_PATTERNS):
+                continue
+            parts.append(text)
+            if sum(p.count(".") + 1 for p in parts) >= 5:
+                break
+
+        if parts:
+            return truncate_text(" ".join(parts), 900)
+        return content.title or ""
+
     def _collect_emails(
         self,
         *contents: Optional[ScrapedContent]
@@ -132,39 +161,103 @@ class ExtractorService:
                 phones.update(content.phones)
         return sorted(list(phones))
 
+    def _score_address_line(self, line: str) -> int:
+        """
+        Score how much a line of text looks like a real postal address.
+
+        Word-boundary matching only - a naive substring check previously
+        let "ave" (for "Avenue") match inside ordinary words like "have",
+        which was enough for a marketing sentence ("100+ companies have
+        trusted...") to get picked as an address. A marketing/trust phrase
+        is disqualified outright regardless of any keyword coincidence.
+        """
+        if self._MARKETING_PHRASE_RE.search(line):
+            return -100
+
+        score = 0
+        if self._POSTAL_CODE_RE.search(line):
+            score += 4
+
+        # A leading number ("5G enables...", "24/7 support") or a keyword
+        # ("data center", "our office culture") is individually too weak a
+        # signal - either false-positives constantly on its own. Require
+        # both together (a real street-number-plus-keyword pattern, e.g.
+        # "123 Main Street" or "9th Floor") before they count for much.
+        has_leading_number = bool(self._LEADING_NUMBER_RE.match(line))
+        has_keyword = bool(self._ADDRESS_KEYWORDS_RE.search(line))
+        if has_leading_number and has_keyword:
+            score += 3
+        elif has_keyword:
+            score += 1
+
+        if self._COUNTRY_STATE_RE.search(line):
+            score += 1
+        if line.count(",") >= 1:
+            score += 1
+        return score
+
+    _POSTAL_CODE_RE = re.compile(r"\b\d{5}(-\d{4})?\b|\b\d{6}\b")
+    # Requires whitespace after the number (with an optional ordinal suffix,
+    # "9th") so it can't match a number glued to letters like "5G" or "24/7".
+    _LEADING_NUMBER_RE = re.compile(r"^\s*\d{1,6}(st|nd|rd|th)?\s+\S")
+    _ADDRESS_KEYWORDS_RE = re.compile(
+        # Deliberately excludes generic words that collide with ordinary
+        # prose - "center" (data center), "place"/"way"/"court"/"square"
+        # (figures of speech), standalone "dr" (Doctor) - each previously
+        # produced a false-positive "address" out of marketing copy.
+        r"\b(street|st|road|rd|avenue|ave|boulevard|blvd|lane|ln|drive|"
+        r"plaza|suite|ste|floor|fl|building|tower|block|plot|sector|phase|colony|"
+        r"nagar|layout|highway|hwy|office|pincode|pin)\b",
+        re.IGNORECASE,
+    )
+    _COUNTRY_STATE_RE = re.compile(
+        r"\b(india|usa|u\.s\.a?\.?|united states|uk|united kingdom|canada|"
+        r"australia|singapore|germany|bangalore|bengaluru|mumbai|delhi|"
+        r"noida|gurgaon|pune|hyderabad|chennai|kolkata)\b",
+        re.IGNORECASE,
+    )
+    _MARKETING_PHRASE_RE = re.compile(
+        r"\b\d+\+?\s*(companies|clients|customers|users|businesses|employees|countries|projects)\b"
+        r"|\b(trusted|partnered with|serving|founded in|established in|since \d{4})\b",
+        re.IGNORECASE,
+    )
+
     def _extract_address(self, content: ScrapedContent) -> str:
         """
         Extract address from contact page content.
-        Searches paragraphs first, then falls back to raw_text
-        for addresses in divs, footers, sections, etc.
-        """
-        # First try paragraphs
-        for paragraph in content.paragraphs:
-            addr_kw = ["street", "road", "suite", "floor", "ave", "avenue",
-                       "nagar", "sector", "phase", "colony", "layout",
-                       "building", "tower", "block", "plot", "office"]
-            if any(w in paragraph.lower() for w in addr_kw):
-                if len(paragraph) < 200:
-                    return paragraph.strip()
 
-        # Fallback: scan full raw text with broader address patterns
+        Scores candidate lines instead of returning the first keyword
+        match, so the best-looking address wins rather than whichever
+        paragraph happens to appear first.
+        """
+        # Phase 1: whole paragraphs, which usually hold a complete address intact.
+        best_text, best_score = None, 2  # require > 2: a single weak signal isn't enough
+        for paragraph in content.paragraphs:
+            text = paragraph.strip()
+            if not (10 < len(text) < 200):
+                continue
+            score = self._score_address_line(text)
+            if score > best_score:
+                best_text, best_score = text, score
+
+        if best_text:
+            return best_text
+
+        # Phase 2: addresses in divs/footers/etc aren't captured as <p> tags -
+        # fall back to raw text, split into fragments and recombine the
+        # ones that look address-like, in their original document order.
         full_text = content.raw_text or " ".join(content.paragraphs)
-        candidates = []
-        lines = re.split(r'[,\n;]', full_text)
-        cities = ["bangalore", "bengaluru", "mumbai", "delhi", "noida",
-                   "gurgaon", "pune", "hyderabad", "chennai", "kolkata"]
-        for line in lines:
-            line = line.strip()
-            if len(line) > 15:
-                lower = line.lower()
-                addr_kw = ["street", "road", "suite", "floor", "ave",
-                           "nagar", "sector", "phase", "colony", "layout",
-                           "building", "tower", "block", "plot", "office",
-                           "pincode", "pin:"]
-                if any(w in lower for w in addr_kw) or any(c in lower for c in cities) or "india" in lower:
-                    candidates.append(line)
-        if candidates:
-            return ", ".join(candidates[:4])
+        fragments = [f.strip() for f in re.split(r"[,\n;]", full_text) if len(f.strip()) > 3]
+
+        kept = []
+        for fragment in fragments:
+            if self._score_address_line(fragment) >= 3:
+                kept.append(fragment)
+            if len(kept) >= 4:
+                break
+
+        if kept:
+            return ", ".join(kept)
         return "Not Found"
 
     def _extract_social_links(self, content: ScrapedContent) -> Dict[str, str]:
