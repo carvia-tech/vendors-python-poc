@@ -5,6 +5,8 @@ Response schemas for the Company Intelligence Engine API.
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 
+from models import Director
+
 
 class HealthResponse(BaseModel):
     """
@@ -51,6 +53,8 @@ class CompanyData(BaseModel):
     incorporation_date: str = Field(default="Not Found", description="Date of incorporation (YYYY-MM-DD)")
     company_age_years: Optional[int] = Field(default=None, description="Complete years since incorporation")
     registered_name: str = Field(default="Not Found", description="Registered name the CIN belongs to")
+    registered_email: str = Field(default="Not Found", description="Email registered with the MCA")
+    directors: List[Director] = Field(default_factory=list, description="Current directors and KMP")
 
     class Config:
         json_schema_extra = {
@@ -92,6 +96,15 @@ class CompanyData(BaseModel):
                 "incorporation_date": "1981-07-02",
                 "company_age_years": 45,
                 "registered_name": "INFOSYS LIMITED",
+                "registered_email": "Manikantha_AGS@infosys.com",
+                "directors": [
+                    {
+                        "name": "NANDAN MOHAN NILEKANI",
+                        "designation": "Director",
+                        "din": "00041245",
+                        "appointment_date": "2017-10-07",
+                    }
+                ],
             }
         }
 
@@ -146,7 +159,16 @@ class EnrichmentResponse(BaseModel):
                         "cin": "L85110KA1981PLC013115",
                         "incorporation_date": "1981-07-02",
                         "company_age_years": 45,
-                        "registered_name": "INFOSYS LIMITED"
+                        "registered_name": "INFOSYS LIMITED",
+                        "registered_email": "Manikantha_AGS@infosys.com",
+                        "directors": [
+                            {
+                                "name": "NANDAN MOHAN NILEKANI",
+                                "designation": "Director",
+                                "din": "00041245",
+                                "appointment_date": "2017-10-07"
+                            }
+                        ]
                     },
                     "metadata": {
                         "source": "Official Website",

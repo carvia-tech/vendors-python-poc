@@ -2,9 +2,10 @@
 Company registry lookup service (Indian MCA data via ZaubaCorp).
 
 This module resolves a company name to its MCA registry entry and reads
-back the two facts the enrichment pipeline cares about: the company's CIN
-(Corporate Identification Number) and how many years it has existed since
-incorporation.
+back the facts the enrichment pipeline cares about: the company's CIN
+(Corporate Identification Number), how many years it has existed since
+incorporation, its MCA-registered email address, and its current
+directors and key managerial personnel.
 
 Only Indian, MCA-registered companies appear in this registry, so a
 non-Indian company (Stripe, Google, ...) legitimately resolves to nothing
@@ -22,7 +23,7 @@ from urllib.parse import quote, urljoin
 import httpx
 from bs4 import BeautifulSoup
 
-from models import RegistryRecord
+from models import RegistryRecord, Director
 from config import settings
 from utils import looks_like_url, get_domain_from_url, ensure_scheme
 
@@ -38,6 +39,28 @@ logger = logging.getLogger("company_intelligence.registry")
 #   PLC    3-letter ownership class
 #   013115 6-digit registration number
 CIN_PATTERN = re.compile(r"[LU]\d{5}[A-Z]{2}(\d{4})[A-Z]{3}\d{6}", re.IGNORECASE)
+
+# The registry's own contact address appears on every page; it is never the
+# looked-up company's registered email.
+_REGISTRY_OWN_EMAIL_DOMAIN = "zaubacorp.com"
+
+
+def decode_cloudflare_email(encoded: str) -> Optional[str]:
+    """
+    Decode a Cloudflare-obfuscated email address.
+
+    Registered emails are served as `<a data-cfemail="...">[email protected]</a>`
+    rather than plain text, so reading the page text alone yields nothing.
+    The encoding is a byte-wise XOR against the first byte.
+    """
+    try:
+        key = int(encoded[:2], 16)
+        return "".join(
+            chr(int(encoded[i:i + 2], 16) ^ key) for i in range(2, len(encoded), 2)
+        )
+    except (ValueError, IndexError):
+        logger.debug(f"Could not decode obfuscated email: {encoded[:16]!r}")
+        return None
 
 # Legal-form words that carry no identifying signal - "INFOSYS" and
 # "INFOSYS LIMITED" are the same company, so these are dropped before any
@@ -69,6 +92,12 @@ def name_match_score(query: str, candidate: str) -> float:
     treated as confident (1.0); everything else scores below the accept
     threshold and is rejected by lookup().
 
+    Word boundaries are ignored in that comparison, because a name taken
+    from a domain arrives concatenated: "linkageit" (from linkageit.com)
+    has to match "LINKAGE IT PRIVATE LIMITED". Collapsing the spaces is
+    still safe - it merges word boundaries but never tolerates an extra
+    word, so "stripe" stays distinct from "stripeimpex".
+
     Returns:
         1.0 for an exact identifying-token match, otherwise a similarity
         ratio in [0, 1) used only for ordering/diagnostics
@@ -78,7 +107,7 @@ def name_match_score(query: str, candidate: str) -> float:
 
     if not query_tokens or not candidate_tokens:
         return 0.0
-    if query_tokens == candidate_tokens:
+    if "".join(query_tokens) == "".join(candidate_tokens):
         return 1.0
 
     return SequenceMatcher(None, " ".join(query_tokens), " ".join(candidate_tokens)).ratio()
@@ -206,20 +235,53 @@ class RegistryService:
         """
         Find registry entries matching a name.
 
-        ZaubaCorp's own search is tried first (it is the authoritative
-        index and returns exact matches at the top); a web search
-        restricted to the site is the fallback for when that endpoint is
-        unavailable or its markup changes.
+        ZaubaCorp's own search is tried first - it is the authoritative
+        index and puts exact matches at the top. A site-restricted web
+        search then fills its gaps.
+
+        The fallback triggers on "no *confident* match", not on "no
+        results at all", because the site's search only matches the spaced
+        form of a name. A domain-derived query like "linkageit" returns
+        40 unrelated LINKAGE* companies and misses LINKAGE IT PRIVATE
+        LIMITED entirely - a non-empty result set that is still a miss.
 
         Returns:
             List of (registered_name, page_url, cin) tuples
         """
         candidates = await self._search_registry_site(search_name)
-        if candidates:
+
+        if self._has_confident_match(search_name, candidates):
             return candidates
 
-        logger.info("Registry site search returned nothing, falling back to web search")
-        return await self._search_via_web(search_name)
+        logger.info(
+            f"No confident match among {len(candidates)} registry-site results "
+            f"for '{search_name}', supplementing with web search"
+        )
+        web_candidates = await self._search_via_web(search_name)
+        return self._merge_candidates(candidates, web_candidates)
+
+    def _has_confident_match(self, search_name: str, candidates: List[Tuple[str, str, str]]) -> bool:
+        """Whether any candidate already clears the accept threshold."""
+        return any(
+            name_match_score(search_name, name) >= MATCH_ACCEPT_THRESHOLD
+            for name, _url, _cin in candidates
+        )
+
+    def _merge_candidates(
+        self,
+        primary: List[Tuple[str, str, str]],
+        extra: List[Tuple[str, str, str]],
+    ) -> List[Tuple[str, str, str]]:
+        """Combine two candidate lists, keeping the first entry seen per CIN."""
+        merged = list(primary)
+        seen_cins = {cin for _name, _url, cin in primary}
+
+        for name, url, cin in extra:
+            if cin not in seen_cins:
+                seen_cins.add(cin)
+                merged.append((name, url, cin))
+
+        return merged
 
     async def _search_registry_site(self, search_name: str) -> List[Tuple[str, str, str]]:
         """Query ZaubaCorp's own company search and parse the result links."""
@@ -314,13 +376,18 @@ class RegistryService:
 
     async def _build_record(self, name: str, url: str, cin: str) -> RegistryRecord:
         """
-        Fetch a company's registry page and assemble its record.
+        Fetch a company's registry page once and assemble its full record.
 
         The CIN is already known from the URL, so a failure to fetch or
         parse the page still yields a usable record - the incorporation
         year encoded in the CIN itself covers the age.
         """
-        incorporation_date = await self._fetch_incorporation_date(url)
+        soup = await self._fetch_page(url)
+
+        incorporation_date = self._extract_labelled_value(soup, "Date of Incorporation") if soup else None
+        registered_email = self._extract_registered_email(soup) if soup else None
+        directors = self._extract_directors(soup) if soup else []
+
         age = years_since(incorporation_date) if incorporation_date else None
 
         if incorporation_date:
@@ -331,27 +398,96 @@ class RegistryService:
             age = self._age_from_cin(cin)
             logger.info(f"No incorporation date on page, derived age from CIN: {age}")
 
+        logger.info(
+            f"Registry page parsed: email={registered_email or 'none'}, "
+            f"{len(directors)} current director(s)"
+        )
+
         return RegistryRecord(
             registered_name=name,
             cin=cin,
             incorporation_date=incorporation_date,
             company_age_years=age,
+            registered_email=registered_email,
+            directors=directors,
             source_url=url,
         )
 
-    async def _fetch_incorporation_date(self, url: str) -> Optional[str]:
-        """Fetch a registry page and read its 'Date of Incorporation' field."""
+    async def _fetch_page(self, url: str) -> Optional[BeautifulSoup]:
+        """Fetch a registry page and return its parsed soup, or None on failure."""
         try:
             async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
                 response = await client.get(url, headers=self.headers)
                 response.raise_for_status()
 
-            soup = BeautifulSoup(response.text, "html.parser")
-            return self._extract_labelled_value(soup, "Date of Incorporation")
+            return BeautifulSoup(response.text, "html.parser")
 
         except httpx.HTTPError as e:
             logger.warning(f"Could not fetch registry page {url}: {e}")
             return None
+
+    def _extract_registered_email(self, soup: BeautifulSoup) -> Optional[str]:
+        """
+        Read the company's MCA-registered email address.
+
+        The address is Cloudflare-obfuscated on the page, so it is decoded
+        from the `data-cfemail` attributes rather than read as text. The
+        registry's own support address appears on every page and is skipped.
+        """
+        for tag in soup.find_all(attrs={"data-cfemail": True}):
+            email = decode_cloudflare_email(tag["data-cfemail"])
+            if email and _REGISTRY_OWN_EMAIL_DOMAIN not in email.lower():
+                return email
+
+        # Some pages may not obfuscate at all - fall back to plain mailto links.
+        for anchor in soup.select('a[href^="mailto:"]'):
+            email = anchor["href"][len("mailto:"):].split("?")[0].strip()
+            if email and _REGISTRY_OWN_EMAIL_DOMAIN not in email.lower():
+                return email
+
+        logger.debug("No registered email found on registry page")
+        return None
+
+    def _extract_directors(self, soup: BeautifulSoup) -> List[Director]:
+        """
+        Read the company's *current* directors and key managerial personnel.
+
+        Anchored to the "Current Directors" heading on purpose: the page
+        also carries a "Past Directors" table with the same columns, and
+        people who have already left should not be reported as current.
+        """
+        table = self._find_current_directors_table(soup)
+        if table is None:
+            logger.debug("No current-directors table found on registry page")
+            return []
+
+        directors: List[Director] = []
+
+        for row in table.find_all("tr"):
+            cells = [cell.get_text(" ", strip=True) for cell in row.find_all("td")]
+            # Columns are: DIN, Director Name, Designation, Appointment Date.
+            if len(cells) < 2 or not cells[1]:
+                continue  # header row, or a paywalled/locked row with no text
+
+            directors.append(Director(
+                name=cells[1],
+                designation=cells[2] if len(cells) > 2 and cells[2] not in ("", "-") else None,
+                din=cells[0] or None,
+                appointment_date=cells[3] if len(cells) > 3 and cells[3] not in ("", "-") else None,
+            ))
+
+            if len(directors) >= settings.registry_max_directors:
+                logger.info(f"Capping directors at {settings.registry_max_directors}")
+                break
+
+        return directors
+
+    def _find_current_directors_table(self, soup: BeautifulSoup):
+        """Locate the table following the 'Current Directors' heading."""
+        for heading in soup.find_all(["h2", "h3", "h4", "h5"]):
+            if heading.get_text(" ", strip=True).lower().startswith("current directors"):
+                return heading.find_next("table")
+        return None
 
     def _extract_labelled_value(self, soup: BeautifulSoup, label: str) -> Optional[str]:
         """

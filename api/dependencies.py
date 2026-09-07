@@ -185,9 +185,12 @@ async def run_enrichment_pipeline(
             company_info.registered_name = registry_record.registered_name
             company_info.incorporation_date = registry_record.incorporation_date or "Not Found"
             company_info.company_age_years = registry_record.company_age_years
+            company_info.registered_email = registry_record.registered_email or "Not Found"
+            company_info.directors = registry_record.directors
             logger.info(
                 f"Registry: {registry_record.registered_name} | CIN {registry_record.cin} | "
-                f"age {registry_record.company_age_years} years"
+                f"age {registry_record.company_age_years} years | "
+                f"{len(registry_record.directors)} director(s)"
             )
         else:
             logger.info(f"No registry record found for '{company_name}'")

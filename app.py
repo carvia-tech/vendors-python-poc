@@ -197,6 +197,22 @@ class CompanyIntelligenceApp:
             with col3:
                 st.metric("Incorporated", company.incorporation_date)
             st.caption(f"🏛️ Registered as: {company.registered_name}")
+            if company.registered_email != "Not Found":
+                st.caption(f"📧 Registered email: {company.registered_email}")
+
+            if company.directors:
+                st.markdown("**Current Directors & Key Managerial Personnel**")
+                st.table([
+                    {
+                        "Name": d.name,
+                        "Designation": d.designation or "-",
+                        "DIN": d.din or "-",
+                        "Appointed": d.appointment_date or "-",
+                    }
+                    for d in company.directors
+                ])
+            else:
+                st.caption("No current directors listed")
         else:
             st.caption("No Indian MCA registry record found (this registry covers Indian companies only)")
 

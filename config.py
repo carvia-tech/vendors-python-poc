@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     registry_base_url: str = "https://www.zaubacorp.com"
     registry_timeout: int = 20
     registry_max_candidates: int = 40
+    registry_max_directors: int = 25
 
     # Scraping Settings
     scraping_timeout: int = 15

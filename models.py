@@ -31,6 +31,15 @@ class SocialLinks(BaseModel):
     github: Optional[str] = None
 
 
+class Director(BaseModel):
+    """A current director or key managerial person on the MCA registry."""
+
+    name: str = Field(description="Director's full name as registered")
+    designation: Optional[str] = Field(default=None, description="e.g. 'Director', 'Managing Director'")
+    din: Optional[str] = Field(default=None, description="Director Identification Number")
+    appointment_date: Optional[str] = Field(default=None, description="Date appointed (YYYY-MM-DD)")
+
+
 class CompanyInfo(BaseModel):
     """Structured company information."""
 
@@ -58,6 +67,8 @@ class CompanyInfo(BaseModel):
         default="Not Found",
         description="Registered name the CIN belongs to, so a wrong registry match is visible"
     )
+    registered_email: str = Field(default="Not Found", description="Email registered with the MCA")
+    directors: List[Director] = Field(default_factory=list, description="Current directors and KMP")
 
 
 class CompanyMetadata(BaseModel):
@@ -129,4 +140,6 @@ class RegistryRecord(BaseModel):
     cin: str = Field(description="21-character Corporate Identification Number")
     incorporation_date: Optional[str] = Field(default=None, description="Date of incorporation (YYYY-MM-DD)")
     company_age_years: Optional[int] = Field(default=None, description="Complete years since incorporation")
+    registered_email: Optional[str] = Field(default=None, description="Email registered with the MCA")
+    directors: List[Director] = Field(default_factory=list, description="Current directors and KMP")
     source_url: str = Field(default="", description="ZaubaCorp page the record was read from")

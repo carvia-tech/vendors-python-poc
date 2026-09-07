@@ -1,0 +1,19 @@
+# Virtual environment (656MB - must never be committed or deployed)
+venv/
+.venv/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Credentials - config.py reads ../.env; on Render/Railway use real env vars
+.env
+*.env
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Streamlit local state
+.streamlit/secrets.toml
