@@ -64,7 +64,9 @@ async def enrich_company(request: EnrichmentRequest):
     1. Searching for the official website
     2. Scraping homepage, about, and contact pages
     3. Extracting structured information
-    4. Optionally analyzing with AI/LLM
+    4. Looking up the MCA company registry for CIN and age since
+       incorporation (Indian registered companies only)
+    5. Optionally analyzing with AI/LLM
 
     Args:
         request: EnrichmentRequest with company_name and optional api_key

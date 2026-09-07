@@ -45,6 +45,13 @@ class CompanyData(BaseModel):
     social_links: Dict[str, str] = Field(default_factory=dict, description="Social media links")
     overview: str = Field(default="Not Found", description="Company overview")
 
+    # Company registry (MCA / ZaubaCorp) fields - Indian registered
+    # companies only; others keep the defaults.
+    cin: str = Field(default="Not Found", description="Corporate Identification Number (21-char MCA CIN)")
+    incorporation_date: str = Field(default="Not Found", description="Date of incorporation (YYYY-MM-DD)")
+    company_age_years: Optional[int] = Field(default=None, description="Complete years since incorporation")
+    registered_name: str = Field(default="Not Found", description="Registered name the CIN belongs to")
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -81,6 +88,10 @@ class CompanyData(BaseModel):
                     "twitter": "https://twitter.com/Infosys",
                 },
                 "overview": "Infosys is an Indian multinational IT services company...",
+                "cin": "L85110KA1981PLC013115",
+                "incorporation_date": "1981-07-02",
+                "company_age_years": 45,
+                "registered_name": "INFOSYS LIMITED",
             }
         }
 
@@ -131,7 +142,11 @@ class EnrichmentResponse(BaseModel):
                         "social_links": {
                             "linkedin": "https://www.linkedin.com/company/infosys"
                         },
-                        "overview": "Infosys is an Indian multinational IT services company..."
+                        "overview": "Infosys is an Indian multinational IT services company...",
+                        "cin": "L85110KA1981PLC013115",
+                        "incorporation_date": "1981-07-02",
+                        "company_age_years": 45,
+                        "registered_name": "INFOSYS LIMITED"
                     },
                     "metadata": {
                         "source": "Official Website",

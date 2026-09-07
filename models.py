@@ -49,6 +49,16 @@ class CompanyInfo(BaseModel):
     social_links: Dict[str, str] = Field(default_factory=dict, description="Social media links")
     overview: str = Field(default="Not Found", description="Company overview")
 
+    # Company registry (MCA / ZaubaCorp) fields. Only Indian registered
+    # companies have these, so a non-Indian company keeps the defaults.
+    cin: str = Field(default="Not Found", description="Corporate Identification Number (21-char MCA CIN)")
+    incorporation_date: str = Field(default="Not Found", description="Date of incorporation (YYYY-MM-DD)")
+    company_age_years: Optional[int] = Field(default=None, description="Complete years since incorporation")
+    registered_name: str = Field(
+        default="Not Found",
+        description="Registered name the CIN belongs to, so a wrong registry match is visible"
+    )
+
 
 class CompanyMetadata(BaseModel):
     """Metadata about the company information retrieval."""
@@ -104,3 +114,19 @@ class CompanyCandidate(BaseModel):
     country: Optional[str] = Field(default=None, description="Country of the company, if determinable")
     description: Optional[str] = Field(default=None, description="Short description of the company")
     type: Optional[str] = Field(default=None, description="Set when this is NOT a company profile, e.g. 'Crypto price page'")
+
+
+class RegistryRecord(BaseModel):
+    """
+    A company's entry in the Indian MCA registry, as surfaced by ZaubaCorp.
+
+    `registered_name` is the name the CIN actually belongs to - it is kept
+    (and surfaced on CompanyInfo) so that a bad name match is visible to
+    the caller rather than silently attaching someone else's CIN.
+    """
+
+    registered_name: str = Field(description="Registered company name in the MCA registry")
+    cin: str = Field(description="21-character Corporate Identification Number")
+    incorporation_date: Optional[str] = Field(default=None, description="Date of incorporation (YYYY-MM-DD)")
+    company_age_years: Optional[int] = Field(default=None, description="Complete years since incorporation")
+    source_url: str = Field(default="", description="ZaubaCorp page the record was read from")
