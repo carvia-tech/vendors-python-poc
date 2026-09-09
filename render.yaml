@@ -1,0 +1,45 @@
+# Render Blueprint - deploys BOTH services from this one repo.
+#
+# The two services are independent: app.py (Streamlit) imports the
+# enrichment pipeline directly rather than calling the API over HTTP, so
+# neither service needs the other's URL. Deploy one or both.
+#
+# Usage: push this file to the repo, then in Render:
+#   New + -> Blueprint -> pick this repo -> Apply
+services:
+  # ---------------------------------------------------------------- API
+  - type: web
+    name: company-intel-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      # Chromium needs ~400MB and will OOM on the 512MB free plan. The
+      # scraper degrades gracefully without it (it just loses the
+      # JS-rendering retry for JS-only sites). Set to true on a paid plan
+      # and switch this service to the Docker runtime.
+      - key: SCRAPING_PLAYWRIGHT_FALLBACK
+        value: "false"
+      # Set in the Render dashboard; without it AI analysis is skipped but
+      # scraping, registry lookup (CIN/age/email/directors) still work.
+      - key: LLM_API_KEY
+        sync: false
+
+  # ----------------------------------------------------------- Demo UI
+  - type: web
+    name: company-intel-ui
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: SCRAPING_PLAYWRIGHT_FALLBACK
+        value: "false"
+      - key: LLM_API_KEY
+        sync: false

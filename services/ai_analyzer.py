@@ -105,9 +105,10 @@ Website Content (scraped from homepage, about, and contact pages):
 Return a JSON object with this exact structure:
 {{
   "industry": "Most specific industry sector (e.g., 'Information Technology & Services', 'Financial Services', 'Healthcare'). Use 'Not Found' if unclear.",
-  "description": "A 2-3 sentence professional company description based on the content.",
+  "description": "A 5-sentence professional company description based on the content - one sentence each on: what the company does, who it serves, its core services/products, what differentiates it, and its scale or market position (skip any point the content doesn't support rather than padding).",
   "services": ["List", "of", "key", "business", "services", "offered"],
   "technologies": ["List", "of", "technologies", "platforms", "or", "tools", "mentioned"],
+  "address": "The company's real postal/office address (street, city, state/region, postal code), if one is genuinely present in the content. Use 'Not Found' if there is none - do NOT use a marketing sentence like '100+ companies trust us' as an address, and do NOT invent one.",
   "overview": "A comprehensive 2-3 paragraph overview covering: what the company does, their market position, key offerings, and any notable information."
 }}
 
@@ -115,8 +116,10 @@ Critical Rules:
 - Return ONLY valid JSON - no markdown formatting, no code fences, no extra text
 - If information is not in the provided content, use "Not Found" - DO NOT hallucinate
 - Services and technologies must be arrays (can be empty if nothing found)
+- Description should be around 5 sentences - do not pad with filler if the content doesn't support that much detail
 - Overview must be substantive (at least 2 paragraphs) using only provided content
 - Industry should be as specific as possible based on available context
+- The "Scraped Address" above (if present) was extracted heuristically and may be wrong (e.g. a marketing sentence) - verify it against the actual content rather than trusting it, and correct it if the content shows a real address elsewhere or none at all
 """
 
     async def _call_llm(self, prompt: str) -> Optional[Dict[str, Any]]:
@@ -193,6 +196,14 @@ Critical Rules:
         if "technologies" in analysis and analysis.get("technologies"):
             initial_info.technologies = analysis["technologies"]
             logger.debug(f"AI set technologies ({len(initial_info.technologies)} items)")
+
+        if "address" in analysis and analysis.get("address"):
+            # AI overrides the heuristic guess even with "Not Found" - that
+            # means it looked at the heuristic's guess and rejected it
+            # (e.g. a marketing sentence), which is more reliable than
+            # leaving a wrong heuristic address in place.
+            initial_info.address = analysis["address"]
+            logger.debug(f"AI set address: {initial_info.address}")
 
         if "overview" in analysis and analysis.get("overview"):
             initial_info.overview = analysis["overview"]

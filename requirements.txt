@@ -4,6 +4,9 @@
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 
+# Demo UI (app.py)
+streamlit>=1.40.0
+
 # Async HTTP Client
 httpx>=0.25.0
 

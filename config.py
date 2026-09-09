@@ -39,6 +39,16 @@ class Settings(BaseSettings):
     # Disambiguation Settings
     disambiguation_max_candidates: int = 5
 
+    # Company Registry Settings (ZaubaCorp - Indian MCA registry data).
+    # Used to attach a company's CIN and age since incorporation. Only
+    # Indian (MCA-registered) companies exist in this registry, so a
+    # non-Indian company legitimately resolves to no record.
+    registry_enabled: bool = True
+    registry_base_url: str = "https://www.zaubacorp.com"
+    registry_timeout: int = 20
+    registry_max_candidates: int = 40
+    registry_max_directors: int = 25
+
     # Scraping Settings
     scraping_timeout: int = 15
     scraping_max_retries: int = 2

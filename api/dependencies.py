@@ -10,6 +10,7 @@ import logging
 _search_service = None
 _extractor_service = None
 _ai_service = None
+_registry_service = None
 _services_initialized = False
 
 logger = logging.getLogger("company_intelligence.api.dependencies")
@@ -20,23 +21,25 @@ def get_services():
     Get or initialize all services lazily.
 
     Returns:
-        Tuple of (SearchService, ExtractorService, AIAnalyzerService)
+        Tuple of (SearchService, ExtractorService, AIAnalyzerService, RegistryService)
     """
-    global _search_service, _extractor_service, _ai_service, _services_initialized
+    global _search_service, _extractor_service, _ai_service, _registry_service, _services_initialized
 
     if not _services_initialized:
         from services.search import SearchService
         from services.extractor import ExtractorService
         from services.ai_analyzer import AIAnalyzerService
+        from services.registry import RegistryService
 
         _search_service = SearchService()
         _extractor_service = ExtractorService()
         _ai_service = AIAnalyzerService()
+        _registry_service = RegistryService()
         _services_initialized = True
 
         logger.info("Services initialized successfully")
 
-    return _search_service, _extractor_service, _ai_service
+    return _search_service, _extractor_service, _ai_service, _registry_service
 
 
 async def search_companies_pipeline(company_name: str):
@@ -54,8 +57,9 @@ async def search_companies_pipeline(company_name: str):
         List of CompanyCandidate
     """
     from config import settings
+    from services.search import rank_company_candidates
 
-    search_service, _extractor_service, ai_service = get_services()
+    search_service, _extractor_service, ai_service, _registry_service = get_services()
 
     candidates, raw_results = await search_service.search_companies(company_name)
 
@@ -65,7 +69,12 @@ async def search_companies_pipeline(company_name: str):
             company_name, candidates, raw_results
         )
 
-    return candidates
+    # Rank after AI refinement (so demotions/promotions from AI classification
+    # are reflected) and only then truncate to the display limit, so a
+    # relevant match found later in the raw result set isn't dropped before
+    # it gets a chance to rank above earlier, less relevant ones.
+    candidates = rank_company_candidates(company_name, candidates)
+    return candidates[:settings.disambiguation_max_candidates]
 
 
 async def run_enrichment_pipeline(
@@ -91,7 +100,7 @@ async def run_enrichment_pipeline(
     from config import settings
     from utils import ensure_scheme, is_valid_url
 
-    search_service, extractor_service, ai_service = get_services()
+    search_service, extractor_service, ai_service, registry_service = get_services()
 
     log_steps = [
         (1, "Searching web for official website..."),
@@ -99,11 +108,12 @@ async def run_enrichment_pipeline(
         (3, "Finding about & contact pages..."),
         (4, "Scraping additional pages..."),
         (5, "Extracting company information..."),
-        (6, "AI analysis complete!"),
+        (6, "Looking up company registry (CIN & age)..."),
+        (7, "AI analysis complete!"),
     ]
 
     async def _log(step: int, message: str):
-        logger.info(f"[{step}/6] {message}")
+        logger.info(f"[{step}/7] {message}")
         if progress_callback:
             await progress_callback(step, message)
 
@@ -121,7 +131,7 @@ async def run_enrichment_pipeline(
             official_url = await search_service.search_official_website(company_name)
 
         if not official_url:
-            await _log(6, "No official website found")
+            await _log(7, "No official website found")
             company_info = CompanyInfo(
                 name=company_name,
                 overview="Analysis failed: No official website found"
@@ -165,7 +175,27 @@ async def run_enrichment_pipeline(
             special_pages=special_pages
         )
 
-        # Step 6: AI Analysis (using the server-configured API key only)
+        # Step 6: Company registry lookup (CIN + age since incorporation).
+        # Indian MCA-registered companies only - anything else legitimately
+        # comes back empty and simply keeps the "Not Found" defaults.
+        await _log(6, "Looking up company registry (CIN & age)...")
+        registry_record = await registry_service.lookup(company_name)
+        if registry_record:
+            company_info.cin = registry_record.cin
+            company_info.registered_name = registry_record.registered_name
+            company_info.incorporation_date = registry_record.incorporation_date or "Not Found"
+            company_info.company_age_years = registry_record.company_age_years
+            company_info.registered_email = registry_record.registered_email or "Not Found"
+            company_info.directors = registry_record.directors
+            logger.info(
+                f"Registry: {registry_record.registered_name} | CIN {registry_record.cin} | "
+                f"age {registry_record.company_age_years} years | "
+                f"{len(registry_record.directors)} director(s)"
+            )
+        else:
+            logger.info(f"No registry record found for '{company_name}'")
+
+        # Step 7: AI Analysis (using the server-configured API key only)
         if settings.llm_api_key:
             ai_service.api_key = settings.llm_api_key
             combined_content = extractor_service.combine_content_for_ai(
@@ -178,7 +208,7 @@ async def run_enrichment_pipeline(
             company_info.industry = "Not Found"
             company_info.overview = "Not Found"
 
-        await _log(6, "Analysis complete!")
+        await _log(7, "Analysis complete!")
 
         metadata = CompanyMetadata(
             source="Official Website",

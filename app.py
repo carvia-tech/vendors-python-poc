@@ -43,7 +43,7 @@ class CompanyIntelligenceApp:
         # Main interface
         col1, col2 = st.columns([4, 1])
         with col1:
-            company_name = st.text_input("Company Name", placeholder="e.g., Microsoft")
+            company_name = st.text_input("Company Name or Website", placeholder="e.g., Microsoft or microsoft.com")
         with col2:
             search_button = st.button("Search", type="primary", use_container_width=True)
 
@@ -114,8 +114,12 @@ class CompanyIntelligenceApp:
         progress_bar = st.progress(0)
         status_text = st.empty()
 
+        # Kept in step with run_enrichment_pipeline's step count; clamped so
+        # an extra pipeline step can never push the bar past 100%.
+        total_steps = 7
+
         async def progress_callback(step: int, message: str):
-            progress_bar.progress(step / 6)
+            progress_bar.progress(min(step / total_steps, 1.0))
             status_text.text(message)
 
         result = asyncio.run(run_enrichment_pipeline(
@@ -179,6 +183,38 @@ class CompanyIntelligenceApp:
             if company.social_links:
                 for platform, link in company.social_links.items():
                     st.caption(f"🔗 [{platform}]({link})")
+
+        # Company Registry (Indian MCA data). Absent for companies that
+        # aren't registered in India, which is expected rather than an error.
+        st.subheader("Company Registry")
+        if company.cin != "Not Found":
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("CIN", company.cin)
+            with col2:
+                age = company.company_age_years
+                st.metric("Age", f"{age} years" if age is not None else "Not Found")
+            with col3:
+                st.metric("Incorporated", company.incorporation_date)
+            st.caption(f"🏛️ Registered as: {company.registered_name}")
+            if company.registered_email != "Not Found":
+                st.caption(f"📧 Registered email: {company.registered_email}")
+
+            if company.directors:
+                st.markdown("**Current Directors & Key Managerial Personnel**")
+                st.table([
+                    {
+                        "Name": d.name,
+                        "Designation": d.designation or "-",
+                        "DIN": d.din or "-",
+                        "Appointed": d.appointment_date or "-",
+                    }
+                    for d in company.directors
+                ])
+            else:
+                st.caption("No current directors listed")
+        else:
+            st.caption("No Indian MCA registry record found (this registry covers Indian companies only)")
 
         # JSON Output
         st.markdown("---")
