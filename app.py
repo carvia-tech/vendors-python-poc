@@ -116,7 +116,7 @@ class CompanyIntelligenceApp:
 
         # Kept in step with run_enrichment_pipeline's step count; clamped so
         # an extra pipeline step can never push the bar past 100%.
-        total_steps = 7
+        total_steps = 8
 
         async def progress_callback(step: int, message: str):
             progress_bar.progress(min(step / total_steps, 1.0))
@@ -135,95 +135,191 @@ class CompanyIntelligenceApp:
 
         company = result.company
 
-        # Basic info
+        # Header stays outside the tabs so the company being looked at is
+        # always visible, whichever tab is open.
         col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("Company", company.name)
             if company.website:
-                st.caption(f"🌐 {company.website}")
+                st.caption(f"\U0001f310 {company.website}")
         with col2:
             st.metric("Industry", company.industry)
         with col3:
             st.metric("Status", result.metadata.status)
 
-        # Description
+        overview_tab, registry_tab, reviews_tab, json_tab = st.tabs([
+            "\U0001f4cb Overview",
+            "\U0001f3db\ufe0f Registry",
+            "\u2b50 Reviews",
+            "\U0001f9fe JSON",
+        ])
+
+        with overview_tab:
+            self._display_overview(company)
+        with registry_tab:
+            self._display_registry(company)
+        with reviews_tab:
+            self._display_reviews(company.reviews)
+        with json_tab:
+            st.json({
+                "company": company.model_dump(),
+                "metadata": result.metadata.model_dump(),
+            })
+
+    def _display_overview(self, company):
+        """Website-derived profile: description, services, contact, social."""
         if company.description:
             st.subheader("Description")
             st.write(company.description)
 
-        # Services & Technologies
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("Services")
             if company.services:
                 for service in company.services:
-                    st.caption(f"• {service}")
+                    st.caption(f"\u2022 {service}")
             else:
                 st.caption("None found")
         with col2:
             st.subheader("Technologies")
             if company.technologies:
                 for tech in company.technologies:
-                    st.caption(f"• {tech}")
+                    st.caption(f"\u2022 {tech}")
             else:
                 st.caption("None found")
 
-        # Contact
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("Contact")
             if company.emails:
                 for email in company.emails:
-                    st.caption(f"📧 {email}")
+                    st.caption(f"\U0001f4e7 {email}")
             if company.phones:
                 for phone in company.phones:
-                    st.caption(f"📱 {phone}")
+                    st.caption(f"\U0001f4f1 {phone}")
+            if company.address and company.address != "Not Found":
+                st.caption(f"\U0001f4cd {company.address}")
         with col2:
             st.subheader("Social")
             if company.social_links:
                 for platform, link in company.social_links.items():
-                    st.caption(f"🔗 [{platform}]({link})")
-
-        # Company Registry (Indian MCA data). Absent for companies that
-        # aren't registered in India, which is expected rather than an error.
-        st.subheader("Company Registry")
-        if company.cin != "Not Found":
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("CIN", company.cin)
-            with col2:
-                age = company.company_age_years
-                st.metric("Age", f"{age} years" if age is not None else "Not Found")
-            with col3:
-                st.metric("Incorporated", company.incorporation_date)
-            st.caption(f"🏛️ Registered as: {company.registered_name}")
-            if company.registered_email != "Not Found":
-                st.caption(f"📧 Registered email: {company.registered_email}")
-
-            if company.directors:
-                st.markdown("**Current Directors & Key Managerial Personnel**")
-                st.table([
-                    {
-                        "Name": d.name,
-                        "Designation": d.designation or "-",
-                        "DIN": d.din or "-",
-                        "Appointed": d.appointment_date or "-",
-                    }
-                    for d in company.directors
-                ])
+                    st.caption(f"\U0001f517 [{platform}]({link})")
             else:
-                st.caption("No current directors listed")
-        else:
-            st.caption("No Indian MCA registry record found (this registry covers Indian companies only)")
+                st.caption("None found")
 
-        # JSON Output
+    def _display_registry(self, company):
+        """Indian MCA registry record. Absent for non-Indian companies."""
+        if company.cin == "Not Found":
+            st.info(
+                "No Indian MCA registry record found "
+                "(this registry covers Indian companies only)."
+            )
+            return
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("CIN", company.cin)
+        with col2:
+            age = company.company_age_years
+            st.metric("Age", f"{age} years" if age is not None else "Not Found")
+        with col3:
+            st.metric("Incorporated", company.incorporation_date)
+
+        st.caption(f"\U0001f3db\ufe0f Registered as: {company.registered_name}")
+        if company.registered_email != "Not Found":
+            st.caption(f"\U0001f4e7 Registered email: {company.registered_email}")
+
+        if company.directors:
+            st.markdown("**Current Directors & Key Managerial Personnel**")
+            st.table([
+                {
+                    "Name": d.name,
+                    "Designation": d.designation or "-",
+                    "DIN": d.din or "-",
+                    "Appointed": d.appointment_date or "-",
+                }
+                for d in company.directors
+            ])
+        else:
+            st.caption("No current directors listed")
+
+    def _display_reviews(self, reviews):
+        """
+        Public-review sentiment, positives and negatives side by side, so a
+        client can judge whether the company is worth working with.
+
+        Every point carries the review site it came from: points the model
+        could not attribute to gathered evidence are dropped upstream, and
+        showing the source is what lets a client verify a claim before
+        acting on it.
+        """
+        if reviews.confidence == "none" and not reviews.sources:
+            st.info(
+                "No public reviews found for this company. This is common for "
+                "small, private or recently incorporated vendors, and is not "
+                "itself a negative signal."
+            )
+            return
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                "Employer rating",
+                f"{reviews.employer_rating}/5" if reviews.employer_rating else "N/A",
+                help="From employee review sites - what it is like to work AT the company",
+            )
+        with col2:
+            st.metric(
+                "Client rating",
+                f"{reviews.business_rating}/5" if reviews.business_rating else "N/A",
+                help="From B2B and consumer review sites - what it is like to work WITH them",
+            )
+        with col3:
+            st.metric(
+                "Evidence",
+                reviews.confidence.title(),
+                help="How many distinct review sites this is based on",
+            )
+
+        if reviews.summary and reviews.summary != "Not Found":
+            st.markdown(f"**Verdict:** {reviews.summary}")
+
+        # Thin evidence is easy to over-read, so say so where it will be seen
+        # rather than burying it at the bottom.
+        if reviews.confidence in ("low", "medium"):
+            st.warning(
+                "Based on a limited number of review sources. Treat these points "
+                "as indicative and check the source links before acting on them."
+            )
+
         st.markdown("---")
-        st.subheader("JSON Output")
-        response_dict = {
-            "company": company.model_dump(),
-            "metadata": result.metadata.model_dump()
-        }
-        st.json(response_dict)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### \u2705 Positive points")
+            if reviews.positives:
+                for point in reviews.positives:
+                    st.markdown(f"\u2022 {point.point}")
+                    st.caption(f"{point.category} \u00b7 {point.source_domain}")
+            else:
+                st.caption("No positive points supported by the review evidence")
+        with col2:
+            st.markdown("#### \u26a0\ufe0f Negative points")
+            if reviews.negatives:
+                for point in reviews.negatives:
+                    st.markdown(f"\u2022 {point.point}")
+                    st.caption(f"{point.category} \u00b7 {point.source_domain}")
+            else:
+                st.caption("No negative points supported by the review evidence")
+
+        if reviews.sources:
+            with st.expander(f"Sources ({len(reviews.sources)} review pages)"):
+                for url in reviews.sources:
+                    st.caption(f"\U0001f517 {url}")
+                st.caption(
+                    "Distilled from public search-result snippets on these sites - "
+                    "indicative sentiment, not verified review data."
+                )
 
 
 def main():

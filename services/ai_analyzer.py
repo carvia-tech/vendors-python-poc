@@ -13,7 +13,15 @@ from typing import Optional, Dict, Any, List
 
 import httpx
 
-from models import CompanyInfo, CompanyMetadata, CompanyCandidate, SearchResult
+from models import (
+    CompanyInfo,
+    CompanyMetadata,
+    CompanyCandidate,
+    SearchResult,
+    ReviewEvidence,
+    ReviewInsights,
+    ReviewPoint,
+)
 from config import settings
 
 
@@ -320,6 +328,179 @@ Critical Rules:
             ))
 
         return merged
+
+    async def synthesize_reviews(
+        self,
+        company_name: str,
+        evidence: "ReviewEvidence",
+    ) -> "ReviewInsights":
+        """
+        Distil gathered review snippets into positive and negative points.
+
+        Every returned point must name a `source_domain` that appears in
+        the evidence; points naming anything else are dropped in
+        `_merge_review_analysis`. This is enforced in code rather than
+        trusted from the prompt because an invented review in a
+        due-diligence report is far more damaging than a short list - a
+        client could onboard a bad vendor on the strength of praise that
+        no one ever wrote.
+
+        Args:
+            company_name: Company the reviews are about
+            evidence: Gathered snippets, ratings and sources
+
+        Returns:
+            ReviewInsights - carries the ratings and sources even when no
+            LLM is configured or the call fails, so the UI can still show
+            the review links it found.
+        """
+        base = ReviewInsights(
+            employer_rating=evidence.employer_rating,
+            business_rating=evidence.business_rating,
+            sources=evidence.sources,
+            confidence=evidence.confidence,
+        )
+
+        if not evidence.snippets:
+            base.summary = "No public reviews found for this company."
+            return base
+
+        if not self.api_key:
+            logger.warning("No API key provided, returning review sources without distilled points")
+            base.summary = "Review sources found, but AI analysis is unavailable (no API key configured)."
+            return base
+
+        logger.info(f"Synthesizing {len(evidence.snippets)} review snippet(s) for: {company_name}")
+
+        try:
+            prompt = self._build_review_prompt(company_name, evidence)
+            response = await self._call_llm(prompt)
+
+            if not response:
+                logger.warning("Review synthesis returned no results, keeping sources only")
+                base.summary = "Review sources found, but the AI summary could not be generated."
+                return base
+
+            return self._merge_review_analysis(base, evidence, response)
+
+        except Exception as e:
+            logger.error(f"Review synthesis failed for '{company_name}': {e}", exc_info=True)
+            base.summary = "Review sources found, but the AI summary could not be generated."
+            return base
+
+    def _build_review_prompt(self, company_name: str, evidence: "ReviewEvidence") -> str:
+        """Build the prompt that distils review snippets into points."""
+        max_points = settings.reviews_max_points
+
+        evidence_block = "\n".join(
+            f"[{i}] domain: {s.domain} | type: {s.category}"
+            f"{f' | rating: {s.rating}/5' if s.rating is not None else ''}\n"
+            f"    title: {s.title}\n"
+            f"    snippet: {s.snippet[:400]}"
+            for i, s in enumerate(evidence.snippets, start=1)
+        )
+
+        allowed_domains = sorted({s.domain for s in evidence.snippets})
+
+        return f"""You are a vendor due-diligence analyst. A client is deciding whether to work with "{company_name}". Below are public review-site search snippets about them. Distil these into positive and negative points. Return ONLY a valid JSON object, no markdown, no extra text.
+
+Review evidence:
+{evidence_block}
+
+The review sites fall into two kinds, and they answer different questions:
+- type "employer" (AmbitionBox, Glassdoor, Indeed): what it is like to work AT the company. Relevant to the client because high attrition, unpaid salaries or management chaos predict delivery risk.
+- type "business" / "consumer" (Clutch, G2, Trustpilot, MouthShut): what it is like to work WITH them as a supplier - delivery quality, deadlines, billing disputes.
+
+Return a JSON object with this exact structure:
+{{
+  "positives": [
+    {{
+      "point": "One sentence stating a positive, specific and concrete",
+      "source_domain": "the exact domain from the evidence above that supports this",
+      "category": "short label, e.g. 'delivery quality', 'management', 'work culture', 'pricing'"
+    }}
+  ],
+  "negatives": [
+    {{
+      "point": "One sentence stating a negative or complaint",
+      "source_domain": "the exact domain from the evidence above that supports this",
+      "category": "short label"
+    }}
+  ],
+  "summary": "Two sentences: whether the review record supports working with this company, and the single biggest caveat. Say plainly if the evidence is too thin to judge."
+}}
+
+Critical Rules:
+- Return ONLY valid JSON - no markdown formatting, no code fences, no extra text
+- Up to {max_points} positives and up to {max_points} negatives
+- DO NOT INVENT POINTS. Every point must be supported by the snippets above. If the evidence only supports 4 positives, return 4 - a short honest list is required, padding is a serious error
+- "source_domain" MUST be copied exactly from one of these: {", ".join(allowed_domains)}
+- Any point whose source_domain is not in that list will be discarded
+- Do not restate the company's own marketing as a review point
+- Keep each point to one sentence, specific rather than generic ("pays vendors 60-90 days late" not "some payment issues")
+- If the snippets are only ratings with no substance, return few or no points and say so in the summary
+"""
+
+    def _merge_review_analysis(
+        self,
+        base: "ReviewInsights",
+        evidence: "ReviewEvidence",
+        analysis: Dict[str, Any],
+    ) -> "ReviewInsights":
+        """
+        Validate LLM review points against the gathered evidence.
+
+        A point is kept only if its `source_domain` is one the gatherer
+        actually saw. Anything else is a fabrication (or a mangled domain)
+        and is dropped with a warning rather than shown to a client.
+        """
+        allowed_domains = {s.domain for s in evidence.snippets}
+        max_points = settings.reviews_max_points
+
+        def clean(raw_points: Any) -> List[ReviewPoint]:
+            kept: List[ReviewPoint] = []
+            for item in raw_points or []:
+                if not isinstance(item, dict):
+                    continue
+
+                text = (item.get("point") or "").strip()
+                domain = (item.get("source_domain") or "").strip().lower()
+
+                if not text:
+                    continue
+                if domain not in allowed_domains:
+                    logger.warning(
+                        f"Dropping unattributable review point (source {domain!r} "
+                        f"not in gathered evidence): {text[:80]}"
+                    )
+                    continue
+
+                kept.append(ReviewPoint(
+                    point=text,
+                    source_domain=domain,
+                    category=(item.get("category") or "general").strip(),
+                ))
+
+                if len(kept) >= max_points:
+                    break
+            return kept
+
+        base.positives = clean(analysis.get("positives"))
+        base.negatives = clean(analysis.get("negatives"))
+
+        summary = (analysis.get("summary") or "").strip()
+        base.summary = summary or "Not Found"
+
+        # A model that could not attribute anything means the snippets held
+        # no real substance, whatever the site count suggested.
+        if not base.positives and not base.negatives:
+            base.confidence = "low"
+
+        logger.info(
+            f"Review synthesis kept {len(base.positives)} positive(s) and "
+            f"{len(base.negatives)} negative(s)"
+        )
+        return base
 
     async def analyze_without_api(self, initial_info: CompanyInfo) -> CompanyInfo:
         """Return initial info when no API key is available."""

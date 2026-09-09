@@ -11,6 +11,7 @@ _search_service = None
 _extractor_service = None
 _ai_service = None
 _registry_service = None
+_reviews_service = None
 _services_initialized = False
 
 logger = logging.getLogger("company_intelligence.api.dependencies")
@@ -21,25 +22,28 @@ def get_services():
     Get or initialize all services lazily.
 
     Returns:
-        Tuple of (SearchService, ExtractorService, AIAnalyzerService, RegistryService)
+        Tuple of (SearchService, ExtractorService, AIAnalyzerService,
+        RegistryService, ReviewsService)
     """
-    global _search_service, _extractor_service, _ai_service, _registry_service, _services_initialized
+    global _search_service, _extractor_service, _ai_service, _registry_service, _reviews_service, _services_initialized
 
     if not _services_initialized:
         from services.search import SearchService
         from services.extractor import ExtractorService
         from services.ai_analyzer import AIAnalyzerService
         from services.registry import RegistryService
+        from services.reviews import ReviewsService
 
         _search_service = SearchService()
         _extractor_service = ExtractorService()
         _ai_service = AIAnalyzerService()
         _registry_service = RegistryService()
+        _reviews_service = ReviewsService()
         _services_initialized = True
 
         logger.info("Services initialized successfully")
 
-    return _search_service, _extractor_service, _ai_service, _registry_service
+    return _search_service, _extractor_service, _ai_service, _registry_service, _reviews_service
 
 
 async def search_companies_pipeline(company_name: str):
@@ -59,7 +63,7 @@ async def search_companies_pipeline(company_name: str):
     from config import settings
     from services.search import rank_company_candidates
 
-    search_service, _extractor_service, ai_service, _registry_service = get_services()
+    search_service, _extractor_service, ai_service, _registry_service, _reviews_service = get_services()
 
     candidates, raw_results = await search_service.search_companies(company_name)
 
@@ -100,7 +104,7 @@ async def run_enrichment_pipeline(
     from config import settings
     from utils import ensure_scheme, is_valid_url
 
-    search_service, extractor_service, ai_service, registry_service = get_services()
+    search_service, extractor_service, ai_service, registry_service, reviews_service = get_services()
 
     log_steps = [
         (1, "Searching web for official website..."),
@@ -109,11 +113,12 @@ async def run_enrichment_pipeline(
         (4, "Scraping additional pages..."),
         (5, "Extracting company information..."),
         (6, "Looking up company registry (CIN & age)..."),
-        (7, "AI analysis complete!"),
+        (7, "Gathering public reviews..."),
+        (8, "AI analysis complete!"),
     ]
 
     async def _log(step: int, message: str):
-        logger.info(f"[{step}/7] {message}")
+        logger.info(f"[{step}/8] {message}")
         if progress_callback:
             await progress_callback(step, message)
 
@@ -131,7 +136,7 @@ async def run_enrichment_pipeline(
             official_url = await search_service.search_official_website(company_name)
 
         if not official_url:
-            await _log(7, "No official website found")
+            await _log(8, "No official website found")
             company_info = CompanyInfo(
                 name=company_name,
                 overview="Analysis failed: No official website found"
@@ -195,9 +200,24 @@ async def run_enrichment_pipeline(
         else:
             logger.info(f"No registry record found for '{company_name}'")
 
-        # Step 7: AI Analysis (using the server-configured API key only)
+        # Step 7: Public reviews. Employer sites say what it is like to work
+        # at the company, B2B sites what it is like to work with them - both
+        # feed the "is this a vendor worth onboarding" question. A vendor with
+        # no review footprint legitimately comes back empty.
+        await _log(7, "Gathering public reviews...")
+        ai_service.api_key = settings.llm_api_key
+        review_evidence = await reviews_service.gather(company_name)
+        company_info.reviews = await ai_service.synthesize_reviews(
+            company_name, review_evidence
+        )
+        logger.info(
+            f"Reviews: {len(company_info.reviews.positives)} positive(s), "
+            f"{len(company_info.reviews.negatives)} negative(s), "
+            f"confidence={company_info.reviews.confidence}"
+        )
+
+        # Step 8: AI Analysis (using the server-configured API key only)
         if settings.llm_api_key:
-            ai_service.api_key = settings.llm_api_key
             combined_content = extractor_service.combine_content_for_ai(
                 homepage_content, about_content, contact_content
             )
@@ -208,7 +228,7 @@ async def run_enrichment_pipeline(
             company_info.industry = "Not Found"
             company_info.overview = "Not Found"
 
-        await _log(7, "Analysis complete!")
+        await _log(8, "Analysis complete!")
 
         metadata = CompanyMetadata(
             source="Official Website",

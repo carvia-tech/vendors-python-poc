@@ -66,7 +66,9 @@ async def enrich_company(request: EnrichmentRequest):
     3. Extracting structured information
     4. Looking up the MCA company registry for CIN and age since
        incorporation (Indian registered companies only)
-    5. Optionally analyzing with AI/LLM
+    5. Gathering public-review sentiment from employer and B2B review
+       sites, distilled into positive and negative points
+    6. Optionally analyzing with AI/LLM
 
     Args:
         request: EnrichmentRequest with company_name and optional api_key

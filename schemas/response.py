@@ -5,7 +5,7 @@ Response schemas for the Company Intelligence Engine API.
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 
-from models import Director
+from models import Director, ReviewInsights
 
 
 class HealthResponse(BaseModel):
@@ -56,6 +56,11 @@ class CompanyData(BaseModel):
     registered_email: str = Field(default="Not Found", description="Email registered with the MCA")
     directors: List[Director] = Field(default_factory=list, description="Current directors and KMP")
 
+    # Public-review sentiment, split into positives and negatives so a
+    # client can weigh whether to work with the company. Empty when no
+    # review footprint was found.
+    reviews: ReviewInsights = Field(default_factory=ReviewInsights, description="Positive/negative points from public reviews")
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -105,6 +110,27 @@ class CompanyData(BaseModel):
                         "appointment_date": "2017-10-07",
                     }
                 ],
+                "reviews": {
+                    "positives": [
+                        {
+                            "point": "Employees consistently rate the learning and training opportunities highly.",
+                            "source_domain": "ambitionbox.com",
+                            "category": "training",
+                        }
+                    ],
+                    "negatives": [
+                        {
+                            "point": "Repeated complaints about below-market salary revisions.",
+                            "source_domain": "ambitionbox.com",
+                            "category": "compensation",
+                        }
+                    ],
+                    "employer_rating": 3.8,
+                    "business_rating": None,
+                    "sources": ["https://www.ambitionbox.com/reviews/infosys-reviews"],
+                    "confidence": "medium",
+                    "summary": "The review record supports working with this company on delivery capability. The main caveat is attrition risk implied by compensation complaints.",
+                },
             }
         }
 
