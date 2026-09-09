@@ -72,6 +72,64 @@ company_intelligence_demo/
 └── start.bat                 # Windows startup script
 ```
 
+## ⭐ Reviews
+
+The enrichment response carries a `reviews` object answering "is this a
+company worth working with", split into positives and negatives:
+
+```json
+"reviews": {
+  "positives": [
+    {"point": "Employees rate learning opportunities highly.",
+     "source_domain": "ambitionbox.com", "category": "training"}
+  ],
+  "negatives": [
+    {"point": "Repeated complaints about below-market hikes.",
+     "source_domain": "ambitionbox.com", "category": "compensation"}
+  ],
+  "employer_rating": 3.6,
+  "business_rating": null,
+  "sources": ["https://www.ambitionbox.com/reviews/..."],
+  "confidence": "high",
+  "summary": "Two-sentence verdict on working with this company."
+}
+```
+
+Two kinds of review site are read, because they answer different questions:
+
+| Kind | Sites | Tells you |
+|------|-------|-----------|
+| `employer` | AmbitionBox, Glassdoor, Indeed | What it is like to work **at** the company. Attrition and unpaid-salary complaints predict delivery risk. |
+| `business` / `consumer` | Clutch, G2, Trustpilot, MouthShut | What it is like to work **with** them as a supplier - delivery quality, deadlines, billing. |
+
+### Accuracy guarantees
+
+Two safeguards matter more than the feature itself, because a fabricated
+review in a due-diligence report is worse than no review at all:
+
+1. **Every point must be attributable.** The LLM has to name the
+   `source_domain` each point came from; any point naming a site the
+   gatherer never saw is dropped in code, not merely discouraged in the
+   prompt. A short honest list beats a padded one.
+2. **Wrong-company reviews are filtered out.** A search for "Prolifics"
+   returns Trustpilot reviews of `prolific.com` - a different company.
+   Snippets must match every significant token of the name as a whole
+   token, so "prolific" never satisfies "prolifics".
+
+`confidence` (`high`/`medium`/`low`/`none`) reflects how many distinct
+sites were found. An empty result is normal for small or newly
+incorporated vendors and is not itself a negative signal.
+
+### Sourcing caveat
+
+By default the gatherer reads only the public search-result snippets that
+search engines already publish, and never fetches the review pages
+themselves (`reviews_fetch_pages: false`) - most review sites forbid
+scraping in their terms and block datacenter IPs. This yields
+*indicative* sentiment rather than verified review data; the UI says so,
+and every point links back to its source. For verified data, use a
+licensed API (Google Places, Trustpilot, G2 partner).
+
 ## 🔧 API Endpoints
 
 ### `GET /api/health`

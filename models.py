@@ -40,6 +40,81 @@ class Director(BaseModel):
     appointment_date: Optional[str] = Field(default=None, description="Date appointed (YYYY-MM-DD)")
 
 
+class ReviewSnippet(BaseModel):
+    """
+    One public search-result snippet about a company from a review site.
+
+    This is the raw evidence the LLM distils into points; keeping the url
+    and domain on every snippet is what makes each resulting point
+    attributable to a real source.
+    """
+
+    domain: str = Field(description="Review site domain, e.g. 'ambitionbox.com'")
+    category: str = Field(description="'employer', 'business' or 'consumer'")
+    title: str = Field(default="", description="Search result title")
+    snippet: str = Field(default="", description="Search result snippet text")
+    url: str = Field(description="URL of the review page")
+    rating: Optional[float] = Field(default=None, description="Five-point rating stated in the snippet, if any")
+
+
+class ReviewEvidence(BaseModel):
+    """
+    All review material gathered for a company, before LLM distillation.
+
+    `confidence` reflects how many distinct sites were found, so a caller
+    can tell "this vendor genuinely has a thin review footprint" apart from
+    "we found plenty and it is mixed".
+    """
+
+    snippets: List[ReviewSnippet] = Field(default_factory=list, description="Raw review snippets")
+    employer_rating: Optional[float] = Field(default=None, description="Mean rating across employer sites")
+    business_rating: Optional[float] = Field(default=None, description="Mean rating across B2B/consumer sites")
+    sources: List[str] = Field(default_factory=list, description="Distinct review URLs found")
+    confidence: str = Field(default="none", description="'high', 'medium', 'low' or 'none'")
+
+
+class ReviewPoint(BaseModel):
+    """
+    A single sentiment point distilled from public reviews.
+
+    `source_domain` is mandatory and must be one of the review sites the
+    gatherer actually saw. A point the LLM cannot attribute to a real
+    source is dropped rather than shown - in a due-diligence context an
+    invented review is worse than a missing one.
+    """
+
+    point: str = Field(description="The positive or negative point, one sentence")
+    source_domain: str = Field(description="Review site the point came from, e.g. 'ambitionbox.com'")
+    category: str = Field(
+        default="general",
+        description="What the point is about, e.g. 'management', 'delivery quality', 'payment terms'",
+    )
+
+
+class ReviewInsights(BaseModel):
+    """
+    Public-review sentiment for a company, split into positives and
+    negatives so a client can weigh whether to work with them.
+
+    Reviews are drawn from two different kinds of site and the distinction
+    matters: employer sites (AmbitionBox, Glassdoor) say what it is like to
+    work *at* the company, while B2B sites (Clutch, G2, Trustpilot) say what
+    it is like to work *with* them as a vendor. Both are kept, each point
+    tagged with the domain it came from.
+    """
+
+    positives: List[ReviewPoint] = Field(default_factory=list, description="Positive points from reviews")
+    negatives: List[ReviewPoint] = Field(default_factory=list, description="Negative points / complaints")
+    employer_rating: Optional[float] = Field(default=None, description="Average employer-site rating out of 5, if stated")
+    business_rating: Optional[float] = Field(default=None, description="Average B2B/client-site rating out of 5, if stated")
+    sources: List[str] = Field(default_factory=list, description="Review-site URLs the analysis drew on")
+    confidence: str = Field(
+        default="none",
+        description="How much review material was actually found: 'high', 'medium', 'low' or 'none'",
+    )
+    summary: str = Field(default="Not Found", description="Two-sentence verdict on working with this company")
+
+
 class CompanyInfo(BaseModel):
     """Structured company information."""
 
@@ -69,6 +144,11 @@ class CompanyInfo(BaseModel):
     )
     registered_email: str = Field(default="Not Found", description="Email registered with the MCA")
     directors: List[Director] = Field(default_factory=list, description="Current directors and KMP")
+
+    # Public-review sentiment (employer + B2B sites). Empty when the
+    # gatherer found no usable review material, which is common for
+    # small or newly incorporated vendors.
+    reviews: ReviewInsights = Field(default_factory=ReviewInsights, description="Positive/negative points from public reviews")
 
 
 class CompanyMetadata(BaseModel):
