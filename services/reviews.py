@@ -29,7 +29,7 @@ from ddgs import DDGS
 
 from models import ReviewEvidence, ReviewSnippet
 from config import settings
-from utils import get_domain_from_url
+from utils import get_domain_from_url, looks_like_url, ensure_scheme
 
 
 logger = logging.getLogger("company_intelligence.reviews")
@@ -170,6 +170,16 @@ class ReviewsService:
         if not settings.reviews_enabled:
             logger.info("Review gathering disabled by configuration")
             return ReviewEvidence()
+
+        # A caller may pass a URL instead of a name (the same input field
+        # accepts either) - reduce it to its brand word first, the same way
+        # registry.py's _to_search_name() does. Left as-is, "carvia.tech"
+        # would search "carvia.tech reviews" and require the literal token
+        # "tech" to appear in every result, which guts recall for no reason.
+        if looks_like_url(company_name):
+            domain = get_domain_from_url(ensure_scheme(company_name))
+            if domain:
+                company_name = domain.split(".")[0].replace("-", " ")
 
         logger.info(f"Gathering reviews for: {company_name}")
 

@@ -1,0 +1,8 @@
+springdoc:
+  swagger-ui:
+    path: /swagger-ui/index.html
+    urls:
+      - name: vendors-python-poc
+        url: /v3/api-docs
+      - name: vendor-poc-service
+        url: https://api.carvia-test.org/ocr-service/openapi.json

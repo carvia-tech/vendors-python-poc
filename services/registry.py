@@ -62,12 +62,17 @@ def decode_cloudflare_email(encoded: str) -> Optional[str]:
         logger.debug(f"Could not decode obfuscated email: {encoded[:16]!r}")
         return None
 
-# Legal-form words that carry no identifying signal - "INFOSYS" and
-# "INFOSYS LIMITED" are the same company, so these are dropped before any
-# name comparison.
+# Legal-form and generic descriptor words that carry no identifying signal
+# - "INFOSYS" and "INFOSYS LIMITED" are the same company, and so are
+# "CARVIA" (a domain-derived query) and "CARVIA TECHNOLOGIES PRIVATE
+# LIMITED" (its registered name) - so these are dropped before any name
+# comparison. Kept in sync with reviews.py's _GENERIC_NAME_WORDS, which
+# already treats "technologies"/"solutions"/"systems"/"services" the same
+# way for the identical reason.
 _LEGAL_SUFFIX_WORDS = {
     "private", "limited", "ltd", "pvt", "llp", "plc",
     "inc", "incorporated", "corporation", "corp", "company", "co",
+    "technologies", "technology", "solutions", "systems", "services",
 }
 
 

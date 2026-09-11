@@ -14,7 +14,7 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # Dependencies first so image layers cache across code changes.
-COPY requirements.txt .
+COPY requirements.txt .ax
 RUN pip install --no-cache-dir -r requirements.txt \
     && playwright install --with-deps chromium
 
@@ -25,3 +25,4 @@ ENV PORT=8000
 EXPOSE 8000
 
 CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+ 
