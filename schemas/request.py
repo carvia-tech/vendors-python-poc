@@ -36,6 +36,7 @@ class EnrichmentRequest(BaseModel):
         json_schema_extra = {
             "example": {
                 "company_name": "Infosys",
+                "website": "infosys.com",
             }
         }
 
