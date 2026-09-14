@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     api_debug: bool = False
     api_reload: bool = True
     cors_origins: list[str] = ["*"]
+    # Set this when a reverse proxy serves this API under a path prefix
+    # (e.g. https://api.example.com/vendors-python-poc/...) instead of at
+    # the domain root. Without it, Swagger's page loads but then fetches
+    # /openapi.json as an absolute path missing the prefix and 404s -
+    # FastAPI needs to know the prefix to generate correct URLs.
+    api_root_path: str = ""
 
     # LLM Settings
     llm_api_key: Optional[str] = None
@@ -94,6 +100,18 @@ class Settings(BaseSettings):
     # snippets and never fetches the review pages themselves. Turn this on
     # only where a licensed API or permission is in place.
     reviews_fetch_pages: bool = False
+
+    # Google Reviews, via the licensed Places API rather than scraping -
+    # Google review pages aren't reliably indexed with rating snippets the
+    # way the sites above are, so the search-snippet approach doesn't work
+    # here. Optional: unset, this source is simply skipped (same graceful
+    # degrade as LLM_API_KEY). Needs a Google Cloud project with the
+    # (legacy) Places API enabled and billing set up - it's metered past a
+    # small free tier.
+    google_places_api_key: Optional[str] = None
+    google_places_base_url: str = "https://maps.googleapis.com/maps/api/place"
+    google_places_timeout: int = 15
+    google_places_max_reviews: int = 5
 
     # Scraping Settings
     scraping_timeout: int = 15

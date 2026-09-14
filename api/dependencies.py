@@ -206,7 +206,7 @@ async def run_enrichment_pipeline(
         # no review footprint legitimately comes back empty.
         await _log(7, "Gathering public reviews...")
         ai_service.api_key = settings.llm_api_key
-        review_evidence = await reviews_service.gather(company_name)
+        review_evidence = await reviews_service.gather(company_name, website=official_url)
         company_info.reviews = await ai_service.synthesize_reviews(
             company_name, review_evidence
         )

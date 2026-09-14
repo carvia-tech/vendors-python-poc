@@ -404,6 +404,8 @@ Critical Rules:
 
         return f"""You are a vendor due-diligence analyst. A client is deciding whether to work with "{company_name}". Below are public review-site search snippets about them. Distil these into positive and negative points. Return ONLY a valid JSON object, no markdown, no extra text.
 
+Evidence confidence (system-computed from how many distinct sites had material - not for you to re-judge): {evidence.confidence}
+
 Review evidence:
 {evidence_block}
 
@@ -427,7 +429,7 @@ Return a JSON object with this exact structure:
       "category": "short label"
     }}
   ],
-  "summary": "Two sentences: whether the review record supports working with this company, and the single biggest caveat. Say plainly if the evidence is too thin to judge."
+  "summary": "1-2 sentences on whether the review record supports working with this company. If the negatives list above has entries, name the single biggest one. If it is empty, say so plainly as a positive signal - do not invent or imply a caveat that is not there. If the evidence itself is thin (few snippets, low confidence), say that plainly instead - that is a different situation from finding negatives and must not be phrased like one."
 }}
 
 Critical Rules:
@@ -439,6 +441,8 @@ Critical Rules:
 - Do not restate the company's own marketing as a review point
 - Keep each point to one sentence, specific rather than generic ("pays vendors 60-90 days late" not "some payment issues")
 - If the snippets are only ratings with no substance, return few or no points and say so in the summary
+- An empty negatives list is NOT itself a negative finding - never phrase the summary as cautionary or risk-laden just because no complaints turned up. Absence of evidence is neutral, not evidence of a problem.
+- Use the stated confidence value, not your own impression of the evidence, to decide whether to caveat as "thin"/"limited": only do so if confidence is "low" or "none". At "medium" or "high" with zero negatives, state support plainly - do NOT add hedges like "further investigation is needed" or "should be verified", there is no basis for them
 """
 
     def _merge_review_analysis(

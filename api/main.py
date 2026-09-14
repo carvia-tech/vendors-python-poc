@@ -49,6 +49,9 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
+    # Lets Swagger/OpenAPI generate correct URLs when a reverse proxy serves
+    # this app under a path prefix (set API_ROOT_PATH in that case).
+    root_path=settings.api_root_path,
 )
 
 # CORS Middleware - Allow Java backend to call this service

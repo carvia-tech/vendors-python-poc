@@ -29,6 +29,7 @@ from ddgs import DDGS
 
 from models import ReviewEvidence, ReviewSnippet
 from config import settings
+from services.google_places import GooglePlacesService
 from utils import get_domain_from_url, looks_like_url, ensure_scheme
 
 
@@ -155,12 +156,14 @@ class ReviewsService:
             f"site:mouthshut.com {name}",
         ]
 
-    async def gather(self, company_name: str) -> ReviewEvidence:
+    async def gather(self, company_name: str, website: Optional[str] = None) -> ReviewEvidence:
         """
         Gather review snippets for a company.
 
         Args:
             company_name: Name of the company to look up reviews for
+            website: Known official website, if any - passed through to
+                Google Places to verify it resolves the right business
 
         Returns:
             ReviewEvidence - empty (confidence "none") when nothing was
@@ -237,6 +240,18 @@ class ReviewsService:
             if len(snippets) >= self.max_snippets:
                 break
 
+        # Google reviews - a separate, licensed source (see google_places.py
+        # for why it can't use the search-snippet approach above). Added
+        # after the snippet cap so a thin DDG result never crowds it out.
+        try:
+            google_data = await GooglePlacesService().find_reviews(company_name, website)
+        except Exception as e:
+            logger.warning(f"Google reviews lookup failed for '{company_name}': {e}")
+            google_data = None
+
+        if google_data:
+            snippets.extend(self._build_google_snippets(google_data))
+
         evidence = ReviewEvidence(
             snippets=snippets,
             employer_rating=self._average_rating(snippets, "employer"),
@@ -247,9 +262,47 @@ class ReviewsService:
 
         logger.info(
             f"Review evidence for '{company_name}': {len(snippets)} snippet(s) "
-            f"across {len(per_domain)} site(s), confidence={evidence.confidence}"
+            f"across {len({s.domain for s in snippets})} site(s), confidence={evidence.confidence}"
         )
         return evidence
+
+    def _build_google_snippets(self, google: Dict[str, object]) -> List[ReviewSnippet]:
+        """
+        Turn a Google Places result into ReviewSnippet entries: one for the
+        aggregate rating (authoritative - computed by Google over the
+        *full* review count, not just the handful sampled below) plus one
+        per individual review, which carry genuine review text rather than
+        a landing-page blurb.
+        """
+        snippets: List[ReviewSnippet] = []
+        maps_url = google.get("maps_url") or "https://www.google.com/maps"
+
+        if google.get("rating") is not None:
+            snippets.append(ReviewSnippet(
+                domain="google.com",
+                category="consumer",
+                title=f"{google.get('name', 'Google Reviews')} - Google Reviews",
+                snippet=(
+                    f"Rated {google['rating']} out of 5 based on "
+                    f"{google.get('user_ratings_total', 0)} Google reviews."
+                ),
+                url=maps_url,
+                rating=google["rating"],
+            ))
+
+        for review in google.get("reviews", []):
+            if not review.get("text"):
+                continue
+            snippets.append(ReviewSnippet(
+                domain="google.com",
+                category="consumer",
+                title=f"Google review by {review.get('author', 'Anonymous')}",
+                snippet=review["text"],
+                url=maps_url,
+                rating=review.get("rating"),
+            ))
+
+        return snippets
 
     def _average_rating(self, snippets: List[ReviewSnippet], categories) -> Optional[float]:
         """Average the stated ratings for one or more categories, or None if none stated."""

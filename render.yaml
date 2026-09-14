@@ -28,6 +28,9 @@ services:
       # scraping, registry lookup (CIN/age/email/directors) still work.
       - key: LLM_API_KEY
         sync: false
+      # Optional; without it, Google reviews are simply skipped as a source.
+      - key: GOOGLE_PLACES_API_KEY
+        sync: false
 
   # ----------------------------------------------------------- Demo UI
   - type: web
