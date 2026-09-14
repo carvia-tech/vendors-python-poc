@@ -1,0 +1,5 @@
+creation_rules:
+  # Specific to `dev` env
+   - pgp: >-
+       5844006A93C330637AEA4FD4810E0B315B118D1E
+     encrypted-regex: ^(data|stringData)$

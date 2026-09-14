@@ -1,0 +1,72 @@
+replicas: 1
+
+app:
+  id: vendors-python-poc
+
+port: 80
+containerPort: 5002
+image: docker.carvia.tech/kube-repo/vendors-python-poc
+pullPolicy: IfNotPresent
+
+dependsOn: postgis-service.soi.svc.cluster.local:5432
+
+env:
+  - name: DATABASE_URL
+    value: postgresql://postgres:password@postgis-service.soi.svc.cluster.local:5432/tafe_demo
+  - name: OPENAI_API_KEY
+    valueFrom:
+      name: carvia-common-secrets
+      key: OPENAI_CARVIA_SECRET
+  - name: OPENAI_EMBED_MODEL
+    value: text-embedding-3-small
+  - name: OPENAI_LLM_MODEL
+    value: gpt-4o-mini
+  - name: OPENAI_LLM_MAX_TOKENS
+    value: "2048"
+  - name: COMPARE_LLM_MAX_TOKENS
+    value: "1024"
+  - name: RETRIEVAL_CANDIDATE_MULTIPLIER
+    value: "4"
+  - name: MAX_RETRIEVAL_CANDIDATES
+    value: "20"
+  - name: SEARCH_RELEVANCE_SCORE_THRESHOLD
+    value: "0.40"
+  - name: DEMO_DATA_MODE
+    value: "true"
+  - name: DEMO_DATABASE_URL
+    value: postgresql://postgres:password@postgis-service.soi.svc.cluster.local:5432/tractor_db_new
+  - name: DEMO_SCHEMA
+    value: public
+resources:
+  requests:
+    memory: "100Mi"
+  #    cpu: "500m"
+  limits:
+    memory: "2Gi"
+#    cpu: "2500m"
+
+ingress:
+  - annotations:
+      cert-manager.io/cluster-issuer: lets-encrypt
+      kubernetes.io/ingress.class: nginx
+      nginx.ingress.kubernetes.io/rewrite-target: /$2
+      nginx.ingress.kubernetes.io/use-regex: "true"
+      nginx.ingress.kubernetes.io/x-forwarded-prefix: /vendors-python-poc
+      nginx.ingress.kubernetes.io/proxy-body-size: "5m"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "21600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+      nginx.ingress.kubernetes.io/eventsource: "true"
+      nginx.ingress.kubernetes.io/location-snippet: |
+        location ~ ^/internal-only/ {
+          deny all;
+          return 403;
+        }
+
+    ingressName: vendors-python-poc-ingress
+    ingressTls:
+      - host: api.carvia-test.org
+        secretName: gateway-ingress-carviatechnet-tls
+    ingressRules:
+      - host: api.carvia-test.org
+        pathPrefix: /vendors-python-poc(/|$)(.*)
+        pathType: Prefix

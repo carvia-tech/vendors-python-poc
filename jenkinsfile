@@ -40,7 +40,7 @@ pipeline {
     environment {
         // Create a custom build number variable
         CUSTOM_BUILD_NUMBER = "${getEnvironmentValue().cdk8sEnv}-${BUILD_NUMBER}-${env.GIT_COMMIT.substring(0, 7)}"
-        REPOSITORY = 'ocr-python-poc'
+        REPOSITORY = 'vendors-python-poc'
         CI = 'true'
         DEPLOY_ENV = getEnvironmentValue()
     }
@@ -164,8 +164,8 @@ pipeline {
             }
 
             alertSensePublisher(
-                    sourceEventId: 'ocr-python-poc-build',
-                    project: 'Ocr Service',
+                    sourceEventId: 'vendors.python-poc-build',
+                    project: 'Vendors Python Service',
                     env: "${getEnvironmentValue().name()}",
                     channelId: '156e93f4-bcef-4bcd-b110-71107cfd81dc',
                     dashboardId: 'default')

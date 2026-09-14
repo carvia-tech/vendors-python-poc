@@ -14,7 +14,8 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # Dependencies first so image layers cache across code changes.
-COPY requirements.txt .ax
+COPY requirements.txt .
+
 RUN pip install --no-cache-dir -r requirements.txt \
     && playwright install --with-deps chromium
 
